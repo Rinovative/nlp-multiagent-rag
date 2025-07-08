@@ -6,6 +6,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write  # Erforderlich, um Änderungen am Code vorzunehmen
+
     steps:
       - uses: actions/checkout@v3
 

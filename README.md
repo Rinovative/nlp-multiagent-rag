@@ -1,4 +1,5 @@
-[![Open in Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io)
+[![Open in Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://rinovative-nlp-multiagent-rag.streamlit.app/)
+
 _Interaktive Web-App direkt im Browser öffnen (via Streamlit Cloud)_
 
 > **Hinweis:**
