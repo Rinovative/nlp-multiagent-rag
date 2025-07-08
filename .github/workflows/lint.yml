@@ -20,8 +20,21 @@ jobs:
       - name: Install Dependencies
         run: poetry install --with dev
 
-      - name: Run black
-        run: poetry run black --check --diff --line-length=150 . --exclude ".*\.ipynb"
+      - name: Install pre-commit hooks
+        run: |
+          pip install pre-commit
+          pre-commit install
 
-      - name: Run ruff
-        run: poetry run ruff check . --fix
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files
+
+      # Commit changes if pre-commit modified files
+      - name: Commit changes if pre-commit modified files
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Actions"
+          git add .
+          git commit -m "Apply black and ruff fixes" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

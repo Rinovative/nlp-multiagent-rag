@@ -12,6 +12,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 REDIS_URL = os.getenv("REDIS_URL")
 
 # Erstelle Instanzen
+index_dir = "temp"
+if not os.path.exists(index_dir):
+    os.makedirs(index_dir)
 faiss_store = FAISSStore(index_file="temp/faiss_index.index")
 client = openai
 
