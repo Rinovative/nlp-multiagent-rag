@@ -2,14 +2,25 @@ from src.document_processor import DocumentProcessor
 from src.vectorstore.faiss_store import FAISSStore
 import os
 from dotenv import load_dotenv
+import streamlit as st
 import openai
 from src.pipeline import RAGChatbot
 from src.memory.memory import MemoryStorage  # Importiere MemoryStorage
 
-# Laden des API-Schlüssels und Initialisieren der Dokumentprozessoren
-load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-REDIS_URL = os.getenv("REDIS_URL")
+# Lädt .env-Datei nur, wenn nicht auf Streamlit Cloud
+if (
+    not st.secrets
+):  # Falls keine Secrets in Streamlit vorhanden sind, dann lade die .env-Datei lokal
+    load_dotenv()
+
+# Wenn auf Streamlit Cloud, verwende die Secrets
+try:
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    REDIS_URL = st.secrets["REDIS_URL"]
+except KeyError:
+    # Wenn du lokal arbeitest und keine Secrets vorhanden sind, nimm die Umgebungsvariablen von .env
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    REDIS_URL = os.getenv("REDIS_URL")
 
 # Erstelle Instanzen
 index_dir = "temp"
