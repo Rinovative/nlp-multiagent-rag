@@ -1,4 +1,4 @@
-[![Open in Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://rinovative-nlp-multiagent-rag.streamlit.app/)  
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://rinovative-nlp-multiagent-rag.streamlit.app/)  
 _Interaktive Web-App direkt im Browser öffnen (via Streamlit Cloud)_
 
 # NLP Multi-Agent RAG (Wahlfachprojekt)
