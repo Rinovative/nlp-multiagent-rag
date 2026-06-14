@@ -1,10 +1,6 @@
 [![Open in Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://rinovative-nlp-multiagent-rag.streamlit.app/)  
 _Interaktive Web-App direkt im Browser öffnen (via Streamlit Cloud)_
 
-> **Hinweis:**
-> Im Standard-Demo-Modus werden die kostenlosen HF-Inference-APIs genutzt.  
-> Bei Bedarf kann der Nutzer eigene API-Keys (Hugging Face oder OpenAI) eingeben, um höhere Limits oder bessere Performance zu erzielen.
-
 # NLP Multi-Agent RAG (Wahlfachprojekt)
 
 **Wahlfachprojekt** im Rahmen des Studiengangs  
