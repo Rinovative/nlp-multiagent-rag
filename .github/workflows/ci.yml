@@ -26,6 +26,9 @@ jobs:
       - name: Install declared dependencies
         run: poetry install --with dev --no-interaction
 
+      - name: Validate lock file
+        run: poetry check --lock
+
       - name: Check formatting
         run: poetry run black --check .
 

@@ -1,5 +1,5 @@
-[Open interactive Streamlit demo](https://rinovative-nlp-multiagent-rag.streamlit.app/)  
-_Interaktive Web-App direkt im Browser öffnen (via Streamlit Cloud)_
+[Interaktive Streamlit-Demo öffnen](https://rinovative-nlp-multiagent-rag.streamlit.app/)\
+_Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
 # NLP Multi-Agent RAG (Wahlfachprojekt)
 

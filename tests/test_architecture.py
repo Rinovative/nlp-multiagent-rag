@@ -262,7 +262,15 @@ def test_obsolete_generic_module_paths_are_absent():
         "src.utils.utils",
         "src.vectorstore.faiss_store",
     ]
-    assert all(importlib.util.find_spec(name) is None for name in obsolete)
+    assert all(_module_path_is_absent(name) for name in obsolete)
+
+
+def _module_path_is_absent(name: str) -> bool:
+    """Return whether a module path is absent, including a missing parent package."""
+    try:
+        return importlib.util.find_spec(name) is None
+    except ModuleNotFoundError:
+        return True
 
 
 def test_cli_package_remains_import_free():
