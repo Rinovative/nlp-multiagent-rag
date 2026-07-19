@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry==2.2.1
+
+      - name: Install declared dependencies
+        run: poetry install --with dev --no-interaction
+
+      - name: Check formatting
+        run: poetry run black --check .
+
+      - name: Run Ruff
+        run: poetry run ruff check .
+
+      - name: Run Mypy
+        run: poetry run mypy src
+
+      - name: Run deterministic tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: poetry run pytest -ra

@@ -1,30 +1,55 @@
-[tool.poetry]
+[project]
 name = "nlp-multiagent-rag"
 version = "0.1.0"
-description = ""
-authors = ["Rino Albertin <rino.albertin@ost.ch>"]
+description = "Multilingual multi-agent RAG for isolated PDF question answering"
+authors = [
+    { name = "Rino Albertin", email = "rino.albertin@ost.ch" },
+]
 readme = "README.md"
+dynamic = ["dependencies", "requires-python"]
+
+[tool.poetry]
 package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
-unstructured = { extras = ["pdf"], version = "^0.18.2" }
 python-dotenv = "^1.1.1"
 pdfplumber = "^0.11.7"
-tiktoken = "^0.9.0"
+langdetect = "^1.0.9"
+numpy = "^2.3.1"
 openai = "^1.93.0"
 faiss-cpu = "^1.11.0"
 streamlit = "^1.46.1"
 sentence-transformers = "^5.0.0"
+huggingface-hub = "^0.33.2"
 redis = "^6.2.0"
 langgraph = "^0.5.1"
-
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
 ruff = "^0.12.1"
 pre-commit = "^4.2.0"
 pytest = "^8.4.1"
+mypy = "^1.16.1"
+httpx = "^0.28.1"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+addopts = "--strict-markers -ra"
+
+[tool.black]
+target-version = ["py312"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
 
 [build-system]
 requires = ["poetry-core"]

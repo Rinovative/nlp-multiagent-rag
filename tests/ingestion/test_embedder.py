@@ -1,63 +1,163 @@
-import glob
-import os
+from __future__ import annotations
+
+import numpy as np
 import pytest
-from pathlib import Path
-from src.utils.utils import FileUtils  # Importiere die FileUtils-Klasse
-from src.ingestion.embedder import PDFEmbedder
-from dotenv import load_dotenv
-import openai
 
-# Verzeichnis der Test-Dokumente
-PDF_DIR = "tests/ingestion/test_documents"
-
-# Nur die .ingested.processed.chunked.json-Dateien werden erfasst
-JSON_FILES = glob.glob(os.path.join(PDF_DIR, "*.ingested.processed.chunked.json"))
-
-# Lade die Umgebungsvariablen
-load_dotenv()
-
-# API-Schlüssel aus der .env-Datei
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Überprüfe, ob der API-Schlüssel geladen wurde
-if OPENAI_API_KEY is None:
-    raise ValueError("OPENAI_API_KEY muss in der .env-Datei gesetzt sein.")
-
-# OpenAI-API-Schlüssel setzen
-openai.api_key = OPENAI_API_KEY
+from src import embeddings, ingestion
 
 
-@pytest.mark.parametrize("json_path", JSON_FILES)
-def test_pdf_embedder_processing(json_path):
-    """
-    Testet den PDFEmbedder, indem es ein JSON-Dokument verarbeitet, Chunks klassifiziert,
-    die jeweiligen Metadaten verarbeitet und das Ergebnis als neues JSON speichert.
-    """
-    output_path = Path(json_path).with_suffix(".embedded.json")
+class FakeSentenceTransformer:
+    def __init__(
+        self,
+        *,
+        dimension: int = 3,
+        invalid_shape: bool = False,
+        non_finite: bool = False,
+    ):
+        self.dimension = dimension
+        self.invalid_shape = invalid_shape
+        self.non_finite = non_finite
+        self.calls: list[dict] = []
 
-    # Initialisiere den PDFEmbedder mit einem OpenAI API-Schlüssel
-    embedder = PDFEmbedder(openai_key=OPENAI_API_KEY)
+    def get_sentence_embedding_dimension(self):
+        return self.dimension
 
-    # Lade das Dokument mit FileUtils
-    doc = FileUtils.load_json(json_path)
+    def encode(self, texts, **kwargs):
+        self.calls.append({"texts": list(texts), **kwargs})
+        dimension = self.dimension + 1 if self.invalid_shape else self.dimension
+        result = np.asarray(
+            [[float(index + 1)] * dimension for index, _ in enumerate(texts)],
+            dtype=np.float32,
+        )
+        if self.non_finite:
+            result[0, 0] = np.nan
+        return result
 
-    # Verarbeite das JSON-Dokument und erhalte Schritt-für-Schritt Ergebnisse
-    result = []
-    for processed_data, step in embedder.process_json(doc):
-        # Du kannst hier `step` ausgeben, wenn du während der Verarbeitung Informationen sehen möchtest
-        print(
-            step
-        )  # Diese Zeile kann entfernt oder durch andere Verarbeitungen ersetzt werden
-        result.append(processed_data)
 
-    # Speichern des Ergebnisses im Test
-    FileUtils.save_json(result, output_path)
+def valid_chunks():
+    document = {
+        "metadata": {
+            "document_title": "Embedding test",
+            "file_hash": "b" * 64,
+            "tables": [],
+        },
+        "pages": [
+            {
+                "page": 1,
+                "paragraphs": [
+                    {"text": "first", "heading_level": 0, "is_type": "normal"},
+                    {"text": "second", "heading_level": 0, "is_type": "normal"},
+                ],
+            }
+        ],
+    }
+    return ingestion.chunker.PDFChunker(
+        max_chunk_length=100, overlap_length=10
+    ).chunk_document(document)
 
-    # Prüfe, ob die Ausgabedatei gespeichert wurde
-    assert os.path.exists(
-        output_path
-    ), f"Output-Datei wurde nicht gespeichert: {output_path}"
 
-    print(f"✅ Neues JSON gespeichert unter: {output_path}")
+def test_local_embedder_is_lazy_batched_normalized_and_prefix_aware():
+    model = FakeSentenceTransformer()
+    factory_calls: list[str] = []
 
-    print("✅ Embedding erfolgreich abgeschlossen.")
+    def factory(model_id: str):
+        factory_calls.append(model_id)
+        return model
+
+    provider = embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+        model_id="intfloat/multilingual-e5-small",
+        dimension=3,
+        batch_size=2,
+        model_factory=factory,
+    )
+    assert factory_calls == []
+
+    document_vectors = provider.embed_documents(["alpha", "beta"])
+    query_vector = provider.embed_query("alpha")
+
+    assert factory_calls == ["intfloat/multilingual-e5-small"]
+    assert model.calls[0]["texts"] == ["passage: alpha", "passage: beta"]
+    assert model.calls[1]["texts"] == ["query: alpha"]
+    assert model.calls[0]["batch_size"] == 2
+    assert model.calls[0]["normalize_embeddings"] is True
+    assert document_vectors[0] == [1.0, 1.0, 1.0]
+    assert query_vector == [1.0, 1.0, 1.0]
+
+
+def test_chunk_embedding_preserves_schema_without_mutation():
+    model = FakeSentenceTransformer()
+    provider = embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+        model_id="test-model",
+        dimension=3,
+        use_e5_prefixes=False,
+        model_factory=lambda _model_id: model,
+    )
+    chunks = valid_chunks()
+
+    result = embeddings.chunks.embed_chunks(chunks, provider)
+
+    assert [item["chunk_id"] for item in result] == [
+        chunk["chunk_id"] for chunk in chunks
+    ]
+    assert result[0]["metadata"] == chunks[0]["metadata"]
+    assert result[0]["metadata"] is not chunks[0]["metadata"]
+    assert model.calls[0]["texts"] == [chunk["text"] for chunk in chunks]
+
+
+def test_invalid_chunk_is_rejected_before_model_loading():
+    factory_calls = 0
+
+    def factory(_model_id: str):
+        nonlocal factory_calls
+        factory_calls += 1
+        return FakeSentenceTransformer()
+
+    provider = embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+        model_id="test-model", dimension=3, model_factory=factory
+    )
+    with pytest.raises(embeddings.contracts.EmbeddingError):
+        embeddings.chunks.embed_chunks(
+            [{"chunk_id": "bad", "text": "text", "metadata": "invalid"}],
+            provider,
+        )
+    assert factory_calls == 0
+
+
+def test_model_dimension_and_response_shape_are_rejected():
+    wrong_dimension = (
+        embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+            model_id="test-model",
+            dimension=3,
+            model_factory=lambda _model_id: FakeSentenceTransformer(dimension=4),
+        )
+    )
+    with pytest.raises(embeddings.contracts.EmbeddingError):
+        wrong_dimension.embed_query("query")
+
+    wrong_shape = embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+        model_id="test-model",
+        dimension=3,
+        model_factory=lambda _model_id: FakeSentenceTransformer(invalid_shape=True),
+    )
+    with pytest.raises(embeddings.contracts.EmbeddingError):
+        wrong_shape.embed_query("query")
+
+
+def test_non_finite_embedding_values_are_rejected():
+    provider = embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+        model_id="test-model",
+        dimension=3,
+        model_factory=lambda _model_id: FakeSentenceTransformer(non_finite=True),
+    )
+
+    with pytest.raises(embeddings.contracts.EmbeddingError, match="non-finite"):
+        provider.embed_query("query")
+
+
+def test_empty_document_input_avoids_model_loading():
+    provider = embeddings.sentence_transformer.SentenceTransformerEmbeddingProvider(
+        model_id="test-model",
+        dimension=3,
+        model_factory=lambda _model_id: pytest.fail("model should remain unloaded"),
+    )
+    assert provider.embed_documents([]) == []
