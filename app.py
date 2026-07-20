@@ -2,7 +2,7 @@
 ===============================================================================
 app.py
 ===============================================================================
-Run the Streamlit boundary for the multilingual PDF RAG application.
+Run the Streamlit boundary for the PDF RAG Assistant application.
 
 Responsibilities:
   - Resolve Streamlit secrets and environment-backed configuration.
@@ -42,7 +42,7 @@ from src import (
 )
 
 
-st.set_page_config(page_title="Multilingual PDF RAG", layout="wide")
+st.set_page_config(page_title="PDF RAG Assistant", layout="wide")
 
 
 def _streamlit_secrets() -> dict[str, object]:
@@ -224,9 +224,9 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
 with st.sidebar:
-    st.markdown("**Multilingual PDF RAG**")
+    st.markdown("**PDF RAG Assistant**")
     st.subheader("Documents")
-    st.write("Upload PDFs and ask questions in English or German.")
+    st.write("Upload PDFs and ask questions about their content")
 
     uploaded_files = st.file_uploader(
         "Upload PDFs",

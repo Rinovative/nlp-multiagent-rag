@@ -1,4 +1,4 @@
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nlp-multiagent-rag.streamlit.app/)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nlp-multiagent-rag.streamlit.app/)  
 _Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
 # NLP Multi-Agent RAG
@@ -12,16 +12,18 @@ _Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
 ## 📌 Projektbeschreibung
 
-Die Web-App ermöglicht Besucherinnen und Besuchern, eigene PDFs hochzuladen und dazu Fragen auf Deutsch oder Englisch zu stellen. Dokumente werden lokal verarbeitet, mit `intfloat/multilingual-e5-small` eingebettet und über einen sitzungsspezifischen FAISS-Index durchsucht. LangGraph koordiniert Retrieval, Gesprächskontext und Antwortgenerierung. Die Generierung läuft über kontingentgeschütztes OpenAI oder Hugging Face Inference Providers. Uploads, Vektorspeicher und Gesprächsverläufe bleiben zwischen Browser-Sitzungen isoliert. Antworten nennen den verwendeten Provider und das Modell sowie Dokument- und Seitenquellen.
+Der öffentliche `PDF RAG Assistant` ermöglicht Besucherinnen und Besuchern, eigene PDFs hochzuladen und in isolierten Browser-Sitzungen dazu Fragen zu stellen. Dokumente werden lokal eingebettet und über einen sitzungsspezifischen FAISS-Index durchsucht. LangGraph koordiniert Retrieval, Gesprächskontext und Antwortgenerierung. Die Generierung läuft über kontingentgeschütztes OpenAI oder Hugging Face Inference Providers. Antworten nennen den verwendeten Provider und das Modell sowie Dokument- und Seitenquellen.
 
 <details>
 <summary><strong>Dokumentverarbeitung und Retrieval</strong></summary>
 
 - `pdfplumber` extrahiert Text, Seiten- und Layoutinformationen direkt aus PDF-Dateien.
 - Die Vorverarbeitung normalisiert Text, erkennt wiederkehrende Kopf- und Fusszeilen und leitet typografische Strukturmerkmale ab.
-- Der Chunker erzeugt deterministische, überlappende Textabschnitte mit Dokument-, Seiten-, Struktur- und Positionsmetadaten.
-- `SentenceTransformers` lädt `intfloat/multilingual-e5-small` lokal; E5-konforme Präfixe unterscheiden Passage- und Anfrage-Embeddings.
+- Der Chunker erhält strukturelle Einheiten wie Absätze, Überschriften, Bildunterschriften und Tabellen. Einheiten bis 1’000 Zeichen bleiben unverändert, längere Einheiten werden deterministisch in Teilstücke mit 200 Zeichen Überlappung zerlegt.
+- `SentenceTransformers` lädt `intfloat/multilingual-e5-small` lokal und erzeugt mehrsprachige semantische Embeddings. Die E5-konformen Präfixe `passage:` und `query:` unterscheiden Dokumenttext und Anfrage, sodass die semantische Suche Fragen und Passagen auch sprachübergreifend abgleichen kann.
 - Ein sitzungsspezifischer FAISS-Index sucht per L2-Distanz. Explizit gespeicherte Snapshots werden samt Schema, Embedding-Modell, Dimension, Index und Datensätzen validiert und atomar aktiviert.
+
+Die öffentliche Oberfläche unterstützt Fragen auf Deutsch und Englisch, der Generierungsprovider formuliert die Antwort in der Sprache der Frage. PDF-Extraktion und Vorverarbeitung übersetzen keine Dokumente. Die Anwendung verspricht keine explizite automatische Spracherkennung, und eine gleichwertige Qualität über alle Sprachen hinweg wurde nicht experimentell nachgewiesen.
 </details>
 
 <details>

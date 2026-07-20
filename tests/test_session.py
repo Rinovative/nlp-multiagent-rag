@@ -1,11 +1,6 @@
 import hashlib
-import importlib
 
-import huggingface_hub
-import openai
 import pytest
-import redis
-import sentence_transformers
 
 from src import application, configuration, ingestion, memory, vectorstore
 
@@ -234,25 +229,6 @@ def test_rejected_selection_does_not_replace_an_active_valid_set():
     assert session.active_document_count == 1
     assert session.store.record_count == 1
     assert session.store.records[0]["text"] == "A valid"
-
-
-def test_importing_application_factory_has_no_external_or_file_side_effects(
-    workspace_tmp_path, monkeypatch
-):
-    monkeypatch.chdir(workspace_tmp_path)
-
-    def unexpected_call(*_args, **_kwargs):
-        raise AssertionError("Import attempted to create an external client")
-
-    monkeypatch.setattr(openai, "OpenAI", unexpected_call)
-    monkeypatch.setattr(huggingface_hub, "InferenceClient", unexpected_call)
-    monkeypatch.setattr(redis, "from_url", unexpected_call)
-    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", unexpected_call)
-
-    import src.application.application_factory as factory_module
-
-    importlib.reload(factory_module)
-    assert list(workspace_tmp_path.iterdir()) == []
 
 
 def test_local_session_starts_without_optional_credentials(

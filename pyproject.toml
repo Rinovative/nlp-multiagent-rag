@@ -1,7 +1,7 @@
 [project]
 name = "nlp-multiagent-rag"
 version = "0.1.0"
-description = "Multilingual multi-agent RAG for isolated PDF question answering"
+description = "Multi-agent RAG assistant for isolated PDF document chat"
 authors = [
     { name = "Rino Albertin", email = "rino.albertin@ost.ch" },
 ]

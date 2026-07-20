@@ -1,4 +1,4 @@
-"""Multilingual PDF RAG application domains.
+"""PDF RAG Assistant application domains.
 
 Provides:
 - agents: Retriever, Generator, and Memory roles.
