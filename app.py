@@ -68,29 +68,29 @@ class _ChatEntry(TypedDict, total=False):
     sources: list[_StoredSource]
 
 
-def _format_upload_size(size_bytes: int) -> str:
-    """Format bytes using the application's documented binary MB unit."""
-
-    return f"{size_bytes / (1024 * 1024):.2f} MB"
-
-
 def _render_sources(sources: Sequence[Mapping[str, object]]) -> None:
     """Render safe source labels without exposing retrieved chunk text."""
 
-    with st.expander("Verwendete Quellen", expanded=False):
+    with st.expander("Sources", expanded=False):
         if not sources:
-            st.caption("Für diese Antwort sind keine Seitenangaben verfügbar.")
+            st.caption("No page references are available for this answer.")
             return
+        seen: set[tuple[str, int | None]] = set()
         for source in sources:
             document_name = str(source.get("document_name", "")).strip()
             if not document_name:
                 continue
-            page_number = source.get("page_number")
-            suffix = (
-                f" · Seite {page_number}"
-                if isinstance(page_number, int) and page_number > 0
-                else ""
+            raw_page_number = source.get("page_number")
+            page_number = (
+                raw_page_number
+                if isinstance(raw_page_number, int) and raw_page_number > 0
+                else None
             )
+            identity = (document_name, page_number)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            suffix = f" · page {page_number}" if page_number is not None else ""
             st.text(f"• {document_name}{suffix}")
 
 
@@ -103,49 +103,82 @@ def _render_chat_entry(entry: Mapping[str, object]) -> None:
         if role == "assistant":
             provider_id = str(entry.get("provider_id", ""))
             model_id = str(entry.get("model_id", ""))
-            st.caption(f"Antwortanbieter: {provider_id} ({model_id})")
-            if entry.get("fallback_occurred") is True:
-                st.info(
-                    "Hugging Face hat kontrolliert übernommen, weil der "
-                    "OpenAI-Pfad nicht verfügbar war."
-                )
+            provider_name = {
+                "huggingface": "Hugging Face",
+                "openai": "OpenAI",
+            }.get(provider_id, provider_id)
+            st.caption(f"{provider_name} · {model_id}")
             raw_sources = entry.get("sources", [])
             sources = raw_sources if isinstance(raw_sources, list) else []
             _render_sources(sources)
 
 
 def _safe_ui_error(exc: Exception) -> str:
-    """Translate project-owned failures into concise German UI messages."""
+    """Translate project-owned failures into concise English UI messages."""
 
     if isinstance(exc, application.session.UploadValidationError):
         return str(exc)
     if isinstance(exc, configuration.runtime.ConfigurationError):
-        return "Die Anwendungskonfiguration ist unvollständig oder ungültig."
+        return "Answer generation is not configured. Please contact the site owner."
     if isinstance(exc, agents.retriever.RetrievalError):
-        return "Die Frage konnte nicht für die Dokumentensuche verarbeitet werden."
+        return "The question could not be processed for document search."
     if isinstance(exc, ingestion.processor.DocumentProcessingError):
         return (
-            "Mindestens ein PDF konnte nicht verarbeitet werden. "
-            "Das bisherige Upload-Set bleibt aktiv."
+            "At least one PDF could not be processed. "
+            "The previous document set remains active."
         )
     if isinstance(exc, embeddings.contracts.EmbeddingError):
-        return "Die Dokumente konnten nicht eingebettet oder durchsucht werden."
+        return "The documents could not be indexed or searched."
     if isinstance(exc, vectorstore.faiss.FAISSStoreError):
-        return "Der sitzungseigene Suchindex ist derzeit nicht verfügbar."
+        return "The document search index is currently unavailable."
     if isinstance(exc, providers.contracts.GenerationSafetyError):
-        return "Die Anfrage konnte wegen einer Sicherheitsbeschränkung nicht beantwortet werden."
+        return "The request could not be answered because of a safety restriction."
+    if isinstance(exc, providers.contracts.GenerationFallbackError):
+        return (
+            "The free fallback provider is temporarily unavailable. "
+            "Please try again later."
+        )
+    if isinstance(
+        exc,
+        (
+            providers.contracts.GenerationConfigurationError,
+            providers.contracts.GenerationAuthenticationError,
+        ),
+    ):
+        return "Answer generation is not configured. Please contact the site owner."
+    if isinstance(exc, providers.contracts.GenerationModelUnavailableError):
+        return "The configured generation model is currently unavailable."
+    if isinstance(
+        exc,
+        (
+            providers.contracts.GenerationCreditsError,
+            providers.contracts.GenerationRateLimitError,
+            providers.contracts.GenerationTemporaryError,
+        ),
+    ):
+        return "Answer generation is temporarily unavailable. Please try again later."
     if isinstance(exc, providers.contracts.GenerationError):
-        return "Die Antwortgenerierung ist derzeit nicht verfügbar."
+        return "Answer generation is currently unavailable."
     if isinstance(exc, quota.contracts.QuotaError):
-        return "Das geschützte OpenAI-Kontingent ist derzeit nicht verfügbar."
-    return "Die Anfrage konnte nicht verarbeitet werden."
+        return "The protected OpenAI allowance is currently unavailable."
+    return "The request could not be processed."
+
+
+def _document_status(document_count: int, chunk_count: int) -> str:
+    """Format compact active-document state with correct English plurals."""
+
+    document_label = "document" if document_count == 1 else "documents"
+    chunk_label = "chunk" if chunk_count == 1 else "chunks"
+    return (
+        f"{document_count} {document_label} · " f"{chunk_count} {chunk_label} indexed"
+    )
 
 
 load_dotenv()
 try:
     config = configuration.runtime.AppConfig.from_sources(secrets=_streamlit_secrets())
 except configuration.runtime.ConfigurationError:
-    st.error("Die Anwendungskonfiguration ist unvollständig oder ungültig.")
+    st.error("The application configuration is incomplete or invalid.")
     st.stop()
 
 if "session_id" not in st.session_state:
@@ -163,36 +196,19 @@ if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
 with st.sidebar:
-    st.title("Multilingual PDF RAG")
-    st.write(
-        "Lade PDF-Dokumente hoch. Nach der lokalen Indexierung kannst du im "
-        "Hauptbereich Fragen auf Deutsch oder Englisch stellen."
-    )
-    if config.huggingface_api_token is None:
-        huggingface_is_primary = config.generation_provider == "huggingface" or (
-            config.generation_provider == "auto" and not config.openai_is_configured
-        )
-        if huggingface_is_primary:
-            st.info(
-                "Die PDF-Indexierung erfolgt lokal. Für Antworten über Hugging Face "
-                "muss HUGGINGFACE_API_TOKEN konfiguriert sein."
-            )
-        elif config.generation_provider == "auto" or config.openai_fallback_enabled:
-            st.info(
-                "Die PDF-Indexierung erfolgt lokal. Ein möglicher Hugging-Face-Fallback "
-                "benötigt HUGGINGFACE_API_TOKEN."
-            )
+    st.markdown("**Multilingual PDF RAG**")
+    st.subheader("Documents")
+    st.write("Upload PDFs and ask questions in English or German.")
 
     uploaded_files = st.file_uploader(
-        "PDF-Dokumente hochladen",
+        "Upload PDFs",
         type=["pdf"],
         accept_multiple_files=True,
         max_upload_size=config.max_upload_file_mb,
         help=(
-            f"Höchstens {config.max_upload_files} PDFs, "
-            f"{config.max_upload_file_mb} MB pro Datei und "
-            f"{config.max_upload_total_mb} MB insgesamt. "
-            "Dabei gilt 1 MB = 1 048 576 Byte."
+            f"Up to {config.max_upload_files} PDFs · "
+            f"{config.max_upload_file_mb} MB per file · "
+            f"{config.max_upload_total_mb} MB total"
         ),
     )
 
@@ -200,13 +216,6 @@ with st.sidebar:
         (uploaded_file.name, uploaded_file.getvalue())
         for uploaded_file in (uploaded_files or [])
     ]
-    selected_size = sum(len(content) for _, content in uploaded_payloads)
-    st.caption(
-        f"Ausgewählt: {len(uploaded_payloads)} von {config.max_upload_files} PDFs, "
-        f"zusammen {_format_upload_size(selected_size)} von "
-        f"{config.max_upload_total_mb} MB."
-    )
-
     try:
         uploads = [
             application.session.UploadedDocument(
@@ -215,7 +224,7 @@ with st.sidebar:
             )
             for file_name, content in uploaded_payloads
         ]
-        with st.spinner("PDF-Dokumente werden lokal verarbeitet und indexiert …"):
+        with st.spinner("Processing documents…"):
             sync_result = application_session.sync_uploads(uploads)
     except (
         configuration.runtime.ConfigurationError,
@@ -227,28 +236,31 @@ with st.sidebar:
         st.error(_safe_ui_error(exc))
     else:
         if sync_result.changed and sync_result.processed:
-            chunk_count = sum(result.chunk_count for result in sync_result.processed)
             st.success(
-                f"{len(sync_result.processed)} PDF-Dokument(e) wurden erfolgreich "
-                f"als {chunk_count} durchsuchbare Chunks indexiert."
+                _document_status(
+                    application_session.active_document_count,
+                    application_session.vector_store.record_count,
+                )
             )
         elif sync_result.changed and not uploads:
-            st.info("Die temporären Dokumente dieser Sitzung wurden entfernt.")
-
-    st.caption(
-        f"Aktiv: {application_session.active_document_count} Dokument(e), "
-        f"{application_session.vector_store.record_count} Chunks."
-    )
+            st.info("Documents removed.")
+        else:
+            st.caption(
+                _document_status(
+                    application_session.active_document_count,
+                    application_session.vector_store.record_count,
+                )
+            )
 
 for chat_entry in st.session_state.chat_messages:
     _render_chat_entry(chat_entry)
 
 documents_are_ready = application_session.vector_store.record_count > 0
 if not documents_are_ready:
-    st.info("Lade zuerst PDF-Dokumente über die Seitenleiste hoch.")
+    st.caption("Upload PDFs in the sidebar to start chatting.")
 
 user_query = st.chat_input(
-    "Frage zu den indexierten Dokumenten eingeben",
+    "Ask a question about your documents",
     disabled=not documents_are_ready,
     key="document_question",
 )
@@ -258,7 +270,7 @@ if user_query:
     st.session_state.chat_messages.append(user_entry)
     _render_chat_entry(user_entry)
     try:
-        with st.spinner("Relevante Textstellen werden gesucht und beantwortet …"):
+        with st.spinner("Generating answer…"):
             result = application_session.ask(user_query)
     except (
         agents.retriever.RetrievalError,

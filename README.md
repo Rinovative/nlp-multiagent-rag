@@ -53,10 +53,12 @@ Der feste LangGraph-Ablauf lädt zuerst den sitzungsspezifischen Verlauf, führt
 | Modus | Verhalten |
 | --- | --- |
 | `huggingface` | Verwendet ausschliesslich die konfigurierte Hugging-Face-Generierung. |
-| `auto` | Verwendet OpenAI, wenn Schlüssel und Redis-Kontingent verfügbar sind; andernfalls oder bei begrenzten temporären Fehlern erfolgt ein einmaliger Hugging-Face-Fallback. Ohne OpenAI-Konfiguration wird direkt Hugging Face verwendet. |
+| `auto` | Verwendet OpenAI, wenn Schlüssel und Redis-Kontingent verfügbar sind; andernfalls oder bei begrenzten temporären Fehlern wird Hugging Face genau einmal versucht. Ohne OpenAI-Konfiguration wird direkt Hugging Face verwendet. |
 | `openai` | Verwendet den kontingentgeschützten OpenAI-Pfad. Ein Hugging-Face-Fallback ist nur mit `OPENAI_FALLBACK_ENABLED=true` aktiv. |
 
 Das Redis-Backend reserviert Anfragen und Token atomar per Lua-Skript. Es begrenzt Tages-, Monats- und Sitzungsnutzung und kann vom Betreiber sofort deaktiviert werden. OpenAI verwendet `gpt-5.4-mini` über `/v1/chat/completions` mit höchstens 384 Ausgabetokens; zusätzlicher Reasoning-Aufwand wird nicht aktiviert. Ist Redis nicht erreichbar, wird keine neue OpenAI-Nutzung unkontrolliert freigegeben; je nach Modus wird sicher abgebrochen oder auf Hugging Face zurückgefallen. Öffentliche Besucher geben niemals API-Schlüssel ein.
+
+Der Hugging-Face-Pfad bleibt von gültiger Authentifizierung, verfügbaren Inference-Providers-Credits, Modellverfügbarkeit, Provider-Kapazität und externen Störungen abhängig. Ein ausgewählter Fallback garantiert deshalb keine erfolgreiche Antwort.
 
 </details>
 
@@ -130,7 +132,7 @@ flowchart TD
 <details>
 <summary><strong>Empfohlen: Poetry und Hugging Face</strong></summary>
 
-Voraussetzungen sind Git, Python 3.12 und Poetry 2.x. Die Hugging-Face-Generierungsroute benötigt ein persönliches Token; die lokalen Embeddings benötigen keinen API-Schlüssel.
+Voraussetzungen sind Git, Python 3.12 und Poetry 2.x. Die Hugging-Face-Generierungsroute benötigt ein persönliches, fein abgestimmtes Token mit der minimalen Berechtigung **Make calls to Inference Providers**; die lokalen Embeddings benötigen keinen API-Schlüssel.
 
 ```bash
 git clone https://github.com/Rinovative/nlp-multiagent-rag.git
@@ -152,7 +154,7 @@ GENERATION_PROVIDER=huggingface
 HUGGINGFACE_API_TOKEN=eigenes_huggingface_token
 ```
 
-Den Token-Platzhalter durch das eigene Hugging-Face-Token ersetzen.
+Den Token-Platzhalter durch das eigene Hugging-Face-Token mit der Berechtigung **Make calls to Inference Providers** ersetzen.
 
 Anwendung aus dem Repository-Stamm starten:
 
@@ -167,7 +169,7 @@ poetry run streamlit run app.py
 
 1. In Streamlit Community Cloud das Repository `Rinovative/nlp-multiagent-rag`, den Branch `main` und den Einstiegspunkt `app.py` wählen.
 2. In den erweiterten Einstellungen Python 3.12 wählen. Community Cloud erkennt das `pyproject.toml` als Poetry-Abhängigkeitsdatei; die synchronisierte `poetry.lock` liegt daneben im Repository-Stamm.
-3. Im Bereich **Secrets** mindestens `GENERATION_PROVIDER` und `HUGGINGFACE_API_TOKEN` hinterlegen. Das Modell kann optional mit `HUGGINGFACE_GENERATION_MODEL` angepasst werden.
+3. Im Bereich **Secrets** mindestens `GENERATION_PROVIDER` und `HUGGINGFACE_API_TOKEN` hinterlegen. Das Hugging-Face-Token benötigt die Berechtigung **Make calls to Inference Providers**. Das Modell kann optional mit `HUGGINGFACE_GENERATION_MODEL` angepasst werden.
 4. Für den optionalen OpenAI-Pfad zusätzlich `OPENAI_API_KEY`, `REDIS_URL` und die gewünschte Routing-Konfiguration setzen.
 5. Deployment-Logs prüfen und danach Upload, Retrieval und eine vollständige Antwort in einer Test-Sitzung validieren.
 
@@ -183,7 +185,7 @@ Die Vorlage [`.env.template`](.env.template) enthält sämtliche unterstützten 
 | Variable | Zweck | Standard oder Pflicht |
 | --- | --- | --- |
 | `GENERATION_PROVIDER` | Route `auto`, `huggingface` oder `openai` | `auto` |
-| `HUGGINGFACE_API_TOKEN` | Token für Hugging Face Inference Providers | Für jede verwendete Hugging-Face-Route erforderlich |
+| `HUGGINGFACE_API_TOKEN` | Fein abgestimmtes Token mit **Make calls to Inference Providers** | Für jede verwendete Hugging-Face-Route erforderlich |
 | `HUGGINGFACE_GENERATION_MODEL` | Hosted-Generation-Modell | `Qwen/Qwen2.5-7B-Instruct` |
 | `OPENAI_API_KEY` | Betreiber-Schlüssel für OpenAI | Nur für OpenAI erforderlich |
 | `OPENAI_GENERATION_MODEL` | OpenAI-Modell für Chat Completions | `gpt-5.4-mini` |

@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 
 import pytest
@@ -163,16 +164,27 @@ def test_auto_falls_back_when_configured_redis_backend_fails():
     assert free.calls == 1
 
 
-def test_explicit_openai_without_redis_fails_closed():
+def test_explicit_openai_without_redis_fails_closed(caplog):
+    free = FakeProvider("huggingface")
+    openai = FakeProvider("openai")
     router = providers.router.GenerationRouter(
         mode="openai",
-        free_provider=FakeProvider("huggingface"),
-        openai_provider=FakeProvider("openai"),
+        free_provider=free,
+        openai_provider=openai,
         quota_backend=None,
     )
 
-    with pytest.raises(quota.contracts.QuotaUnavailableError):
-        router.generate(request(), session_id="session")
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(quota.contracts.QuotaUnavailableError):
+            router.generate(request(), session_id="session")
+
+    assert openai.calls == 0
+    assert free.calls == 0
+    assert (
+        "openai_quota_authorization_denied provider=openai model=openai-model "
+        "fallback_reason=openai_quota_unavailable "
+        "provider_call_attempted=false"
+    ) in caplog.text
 
 
 def test_openai_success_is_authorized_and_reconciled_to_actual_usage():
@@ -196,7 +208,7 @@ def test_openai_success_is_authorized_and_reconciled_to_actual_usage():
     assert free.calls == 0
 
 
-def test_auto_uses_openai_five_times_then_huggingface_for_session_limit():
+def test_auto_uses_openai_five_times_then_huggingface_for_session_limit(caplog):
     free = FakeProvider("huggingface")
     openai = FakeProvider("openai")
     hard_quota = configured_quota()
@@ -207,9 +219,11 @@ def test_auto_uses_openai_five_times_then_huggingface_for_session_limit():
         quota_backend=hard_quota,
     )
 
-    results = [
-        router.generate(request(), session_id="one-browser-session") for _ in range(6)
-    ]
+    with caplog.at_level(logging.INFO):
+        results = [
+            router.generate(request(), session_id="one-browser-session")
+            for _ in range(6)
+        ]
 
     assert [result.provider_id for result in results[:5]] == ["openai"] * 5
     assert all(result.fallback_occurred is False for result in results[:5])
@@ -220,6 +234,16 @@ def test_auto_uses_openai_five_times_then_huggingface_for_session_limit():
     assert openai.calls == 5
     assert free.calls == 1
     assert hard_quota.reserve_calls == 6
+    assert (
+        "openai_quota_authorization_denied provider=openai model=openai-model "
+        "fallback_reason=session_requests_exhausted "
+        "provider_call_attempted=false"
+    ) in caplog.text
+    assert (
+        "generation_route_selected provider=huggingface model=huggingface-model "
+        "fallback_reason=session_requests_exhausted "
+        "provider_call_attempted=false"
+    ) in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -348,9 +372,16 @@ def test_failed_fallback_is_not_retried_or_routed_recursively():
         quota_backend=configured_quota(),
     )
 
-    with pytest.raises(providers.contracts.GenerationTemporaryError):
+    with pytest.raises(providers.contracts.GenerationFallbackError) as captured:
         router.generate(request(), session_id="session")
 
+    assert captured.value.provider_id == "huggingface"
+    assert captured.value.model_id == "huggingface-model"
+    assert captured.value.fallback_reason == "openai_temporarily_unavailable"
+    assert captured.value.provider_error_category == "temporary"
+    assert isinstance(
+        captured.value.__cause__, providers.contracts.GenerationTemporaryError
+    )
     assert openai.calls == 1
     assert free.calls == 1
 

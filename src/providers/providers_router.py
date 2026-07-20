@@ -22,6 +22,7 @@ Boundaries:
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from src import quota
@@ -31,6 +32,7 @@ from . import providers_contracts as contracts
 __all__ = ["GenerationRouter"]
 
 GenerationMode = Literal["auto", "huggingface", "openai"]
+_LOGGER = logging.getLogger(__name__)
 
 
 class GenerationRouter:
@@ -84,8 +86,49 @@ class GenerationRouter:
     def _free(
         self, request: contracts.GenerationRequest, *, reason: str | None = None
     ) -> contracts.GenerationResult:
-        result = self._free_provider.generate(request)
+        _LOGGER.info(
+            "generation_route_selected provider=%s model=%s "
+            "fallback_reason=%s provider_call_attempted=false",
+            self._free_provider.provider_id,
+            self._free_provider.model_id,
+            reason or "none",
+        )
+        try:
+            result = self._free_provider.generate(request)
+        except contracts.GenerationError as exc:
+            _LOGGER.warning(
+                "generation_route_failed provider=%s model=%s "
+                "error_category=%s fallback_reason=%s "
+                "provider_call_attempted=true",
+                self._free_provider.provider_id,
+                self._free_provider.model_id,
+                exc.error_category,
+                reason or "none",
+            )
+            if reason is not None:
+                raise contracts.GenerationFallbackError(
+                    provider_id=self._free_provider.provider_id,
+                    model_id=self._free_provider.model_id,
+                    fallback_reason=reason,
+                    provider_error=exc,
+                ) from exc
+            raise
         return result if reason is None else result.with_fallback(reason)
+
+    def _log_quota_denial(self, *, reason: str) -> None:
+        """Record a secret-safe denial before any OpenAI provider call."""
+
+        model_id = (
+            "unconfigured"
+            if self._openai_provider is None
+            else self._openai_provider.model_id
+        )
+        _LOGGER.info(
+            "openai_quota_authorization_denied provider=openai model=%s "
+            "fallback_reason=%s provider_call_attempted=false",
+            model_id,
+            reason,
+        )
 
     @staticmethod
     def _safe_release(
@@ -122,6 +165,7 @@ class GenerationRouter:
                 "OpenAI generation is selected but OPENAI_API_KEY is not configured."
             )
         if self._quota_backend is None:
+            self._log_quota_denial(reason="openai_quota_unavailable")
             if self._quota_fallback_allowed():
                 return self._free(request, reason="openai_quota_unavailable")
             raise quota.contracts.QuotaUnavailableError(
@@ -134,10 +178,12 @@ class GenerationRouter:
                 estimated_tokens=request.estimated_total_tokens,
             )
         except quota.contracts.QuotaExhaustedError as exc:
+            self._log_quota_denial(reason=exc.reason)
             if self._quota_fallback_allowed():
                 return self._free(request, reason=exc.reason)
             raise
         except quota.contracts.QuotaUnavailableError:
+            self._log_quota_denial(reason="openai_quota_unavailable")
             if self._quota_fallback_allowed():
                 return self._free(request, reason="openai_quota_unavailable")
             raise

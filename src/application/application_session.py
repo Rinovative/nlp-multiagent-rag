@@ -67,10 +67,10 @@ class UploadedDocument:
 
     def __post_init__(self) -> None:
         if not isinstance(self.file_name, str) or not self.file_name.strip():
-            raise UploadValidationError("Jeder Upload benötigt einen Dateinamen.")
+            raise UploadValidationError("Every upload needs a file name.")
         if not isinstance(self.content, bytes) or not self.content:
             raise UploadValidationError(
-                f"Die hochgeladene Datei {self.file_name!r} ist leer oder unlesbar."
+                f"The uploaded file {self.file_name!r} is empty or unreadable."
             )
 
     @property
@@ -182,22 +182,21 @@ class SessionDocumentManager:
 
         if len(uploads) > self.max_upload_files:
             raise UploadValidationError(
-                f"Es können höchstens {self.max_upload_files} PDF-Dateien "
-                "gleichzeitig ausgewählt werden."
+                f"Select no more than {self.max_upload_files} PDF files at once."
             )
 
         for upload in uploads:
             if len(upload.content) > self.max_upload_file_bytes:
                 raise UploadValidationError(
-                    f"Die Datei {upload.file_name!r} überschreitet das Limit von "
-                    f"{self.max_upload_file_bytes} Byte pro PDF."
+                    f"The file {upload.file_name!r} exceeds the per-PDF limit of "
+                    f"{self.max_upload_file_bytes} bytes."
                 )
 
         total_upload_bytes = sum(len(upload.content) for upload in uploads)
         if total_upload_bytes > self.max_upload_total_bytes:
             raise UploadValidationError(
-                "Die ausgewählten PDFs überschreiten das Gesamtlimit von "
-                f"{self.max_upload_total_bytes} Byte."
+                "The selected PDFs exceed the combined limit of "
+                f"{self.max_upload_total_bytes} bytes."
             )
 
         unique_uploads: list[UploadedDocument] = []

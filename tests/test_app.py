@@ -59,13 +59,21 @@ def test_streamlit_script_starts_without_credentials(monkeypatch):
     app = AppTest.from_file("app.py").run(timeout=20)
 
     assert not app.exception
-    assert app.sidebar.title[0].value == "Multilingual PDF RAG"
-    assert not app.main.title
-    assert app.sidebar.info[0].value.startswith("Die PDF-Indexierung erfolgt lokal.")
-    assert app.main.info[0].value == (
-        "Lade zuerst PDF-Dokumente über die Seitenleiste hoch."
+    assert not app.sidebar.title
+    assert app.sidebar.markdown[0].value == "**Multilingual PDF RAG**"
+    assert app.sidebar.subheader[0].value == "Documents"
+    assert (
+        sum(
+            element.value == "Upload PDFs and ask questions in English or German."
+            for element in app.sidebar.markdown
+        )
+        == 1
     )
+    assert not app.main.title
+    assert not app.sidebar.info
+    assert app.main.caption[0].value == "Upload PDFs in the sidebar to start chatting."
     assert app.chat_input[0].disabled is True
+    assert app.chat_input[0].placeholder == "Ask a question about your documents"
     assert not app.sidebar.chat_input
 
 
@@ -79,9 +87,7 @@ def test_configured_huggingface_script_starts_without_inference(monkeypatch):
     assert not app.exception
     assert not app.error
     assert not app.sidebar.info
-    assert app.main.info[0].value == (
-        "Lade zuerst PDF-Dokumente über die Seitenleiste hoch."
-    )
+    assert app.main.caption[0].value == "Upload PDFs in the sidebar to start chatting."
 
 
 def test_streamlit_layout_keeps_documents_in_sidebar_and_chat_in_main():
@@ -117,6 +123,10 @@ def test_streamlit_layout_keeps_documents_in_sidebar_and_chat_in_main():
         for keyword in uploader.keywords
         if keyword.arg == "max_upload_size"
     )
+    uploader_label = uploader.args[0]
+    uploader_help = next(
+        keyword.value for keyword in uploader.keywords if keyword.arg == "help"
+    )
 
     assert ast.unparse(max_upload_size) == "config.max_upload_file_mb"
     all_streamlit_attributes = {
@@ -137,8 +147,21 @@ def test_streamlit_layout_keeps_documents_in_sidebar_and_chat_in_main():
     ]
 
     assert top_level_streamlit_calls[0] == "set_page_config"
+    page_config = next(
+        statement.value
+        for statement in tree.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value.func, ast.Attribute)
+        and statement.value.func.attr == "set_page_config"
+    )
+    page_title = next(
+        keyword.value for keyword in page_config.keywords if keyword.arg == "page_title"
+    )
+    assert ast.literal_eval(page_title) == "Multilingual PDF RAG"
     assert {
-        "title",
+        "markdown",
+        "subheader",
         "write",
         "file_uploader",
         "caption",
@@ -147,6 +170,12 @@ def test_streamlit_layout_keeps_documents_in_sidebar_and_chat_in_main():
         "success",
         "info",
     } <= sidebar_attributes
+    assert "title" not in sidebar_attributes
+    assert ast.literal_eval(uploader_label) == "Upload PDFs"
+    assert "Up to " in ast.unparse(uploader_help)
+    assert " PDFs · " in ast.unparse(uploader_help)
+    assert " MB per file · " in ast.unparse(uploader_help)
+    assert " MB total" in ast.unparse(uploader_help)
     assert {"chat_message", "chat_input"}.isdisjoint(sidebar_attributes)
     assert {"form", "text_input", "form_submit_button"}.isdisjoint(
         all_streamlit_attributes
@@ -155,16 +184,19 @@ def test_streamlit_layout_keeps_documents_in_sidebar_and_chat_in_main():
 
 
 class _FakeApplicationSession:
-    def __init__(self) -> None:
+    def __init__(self, *, error=None) -> None:
         self.active_document_count = 1
         self.vector_store = SimpleNamespace(record_count=2)
         self.ask_calls: list[str] = []
+        self.error = error
 
     def sync_uploads(self, _uploads):
         return SimpleNamespace(changed=False, processed=(), active_document_ids=("a",))
 
     def ask(self, question):
         self.ask_calls.append(question)
+        if self.error is not None:
+            raise self.error
         return orchestration.rag.RAGResult(
             generation=providers.contracts.GenerationResult(
                 answer="Die OST – Ostschweizer Fachhochschule.",
@@ -218,21 +250,19 @@ def test_sidebar_reports_upload_validation_and_processing_without_reprocessing(
     monkeypatch,
 ):
     validation_session = _ReportingApplicationSession(
-        error=application.session.UploadValidationError("Upload-Limit überschritten.")
+        error=application.session.UploadValidationError("Upload limit exceeded.")
     )
     validation_app = _run_with_session(monkeypatch, validation_session)
 
     assert not validation_app.exception
-    assert validation_app.sidebar.error[0].value == "Upload-Limit überschritten."
+    assert validation_app.sidebar.error[0].value == "Upload limit exceeded."
     assert not validation_app.main.error
 
     processing_session = _ReportingApplicationSession()
     processing_app = _run_with_session(monkeypatch, processing_session)
 
     assert not processing_app.exception
-    assert processing_app.sidebar.success[0].value == (
-        "1 PDF-Dokument(e) wurden erfolgreich als 3 durchsuchbare Chunks indexiert."
-    )
+    assert processing_app.sidebar.success[0].value == "1 document · 3 chunks indexed"
     assert not processing_app.main.success
 
     processing_app.run(timeout=20)
@@ -253,19 +283,39 @@ def test_chat_submission_persists_once_with_attribution_and_sources(monkeypatch)
     assert fake_session.ask_calls == ["An welcher Hochschule?"]
     assert len(app.session_state["chat_messages"]) == 2
     assert any(
-        caption.value == "Aktiv: 1 Dokument(e), 2 Chunks."
+        caption.value == "1 document · 2 chunks indexed"
         for caption in app.sidebar.caption
     )
     assert any(
-        caption.value == "Antwortanbieter: huggingface (Qwen/Qwen2.5-7B-Instruct)"
+        caption.value == "Hugging Face · Qwen/Qwen2.5-7B-Instruct"
         for caption in app.main.caption
     )
     assert len(app.main.chat_message) == 2
-    assert any(expander.label == "Verwendete Quellen" for expander in app.main.expander)
-    assert any(text.value == "• Projektbericht.pdf · Seite 1" for text in app.main.text)
+    assert any(expander.label == "Sources" for expander in app.main.expander)
+    assert any(text.value == "• Projektbericht.pdf · page 1" for text in app.main.text)
     assert any(text.value == "• Anhang.pdf" for text in app.main.text)
 
     app.run(timeout=20)
 
     assert fake_session.ask_calls == ["An welcher Hochschule?"]
     assert len(app.session_state["chat_messages"]) == 2
+
+
+def test_failed_free_fallback_has_specific_safe_visitor_message(monkeypatch):
+    fallback_error = providers.contracts.GenerationFallbackError(
+        provider_id="huggingface",
+        model_id="Qwen/Qwen2.5-7B-Instruct",
+        fallback_reason="session_requests_exhausted",
+        provider_error=providers.contracts.GenerationTemporaryError("private detail"),
+    )
+    fake_session = _FakeApplicationSession(error=fallback_error)
+    app = _run_with_session(monkeypatch, fake_session)
+
+    app.chat_input[0].set_value("What is this about?").run(timeout=20)
+
+    assert fake_session.ask_calls == ["What is this about?"]
+    assert app.main.error[0].value == (
+        "The free fallback provider is temporarily unavailable. "
+        "Please try again later."
+    )
+    assert "private detail" not in app.main.error[0].value

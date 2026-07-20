@@ -22,14 +22,17 @@ Boundaries:
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Literal, Protocol
+from typing import ClassVar, Literal, Protocol
 
 __all__ = [
     "GenerationAuthenticationError",
     "GenerationConfigurationError",
+    "GenerationCreditsError",
     "GenerationError",
+    "GenerationFallbackError",
     "GenerationInvalidRequestError",
     "GenerationMessage",
+    "GenerationModelUnavailableError",
     "GenerationProvider",
     "GenerationRateLimitError",
     "GenerationRequest",
@@ -44,33 +47,97 @@ __all__ = [
 class GenerationError(RuntimeError):
     """Represent a project-owned generation failure safe for UI display."""
 
+    error_category: ClassVar[str] = "generation_error"
+
 
 class GenerationConfigurationError(GenerationError):
     """Indicate that a requested generation route lacks required configuration."""
+
+    error_category = "configuration"
 
 
 class GenerationAuthenticationError(GenerationError):
     """Indicate rejected provider credentials or permissions without leaking them."""
 
+    error_category = "authentication"
+
+
+class GenerationCreditsError(GenerationError):
+    """Indicate that provider-managed inference credits are unavailable."""
+
+    error_category = "credits"
+
 
 class GenerationRateLimitError(GenerationError):
-    """Indicate a provider-owned rate, credit, or capacity rejection."""
+    """Indicate a provider-owned rate or capacity rejection."""
+
+    error_category = "rate_limit"
 
 
 class GenerationTemporaryError(GenerationError):
     """Indicate a transient timeout, connection, overload, or server failure."""
 
+    error_category = "temporary"
+
+
+class GenerationModelUnavailableError(GenerationError):
+    """Indicate that the configured model has no usable hosted route."""
+
+    error_category = "model_unavailable"
+
 
 class GenerationInvalidRequestError(GenerationError):
     """Indicate invalid provider configuration or request shape."""
+
+    error_category = "invalid_request"
 
 
 class GenerationSafetyError(GenerationError):
     """Indicate that a provider rejected generation for safety reasons."""
 
+    error_category = "safety"
+
 
 class GenerationResponseError(GenerationError):
     """Indicate an unusable malformed or empty provider response."""
+
+    error_category = "malformed_response"
+
+
+class GenerationFallbackError(GenerationError):
+    """Preserve a failed fallback's safe route and provider-error context.
+
+    The original project-owned error remains available as ``__cause__`` for
+    debugging, while visitors receive only a concise fallback-specific message.
+    """
+
+    error_category = "fallback_failed"
+
+    def __init__(
+        self,
+        *,
+        provider_id: str,
+        model_id: str,
+        fallback_reason: str,
+        provider_error: GenerationError,
+    ) -> None:
+        """Create a secret-safe failure for one attempted fallback call."""
+
+        if (
+            not provider_id.strip()
+            or not model_id.strip()
+            or not fallback_reason.strip()
+        ):
+            raise ValueError(
+                "Fallback failures need provider, model, and reason values."
+            )
+        if not isinstance(provider_error, GenerationError):
+            raise TypeError("provider_error must be a project-owned GenerationError")
+        super().__init__("The configured fallback generation route failed.")
+        self.provider_id = provider_id
+        self.model_id = model_id
+        self.fallback_reason = fallback_reason
+        self.provider_error_category = provider_error.error_category
 
 
 @dataclass(frozen=True)

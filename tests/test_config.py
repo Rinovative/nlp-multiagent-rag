@@ -38,6 +38,7 @@ def test_credential_free_defaults_use_local_e5_and_auto_free_route():
     assert config.embedding_dimension == 384
     assert config.embedding_uses_e5_prefixes is True
     assert config.generation_provider == "auto"
+    assert config.huggingface_generation_model == "Qwen/Qwen2.5-7B-Instruct"
     assert config.openai_generation_model == "gpt-5.4-mini"
     assert config.max_upload_file_mb == 64
     assert config.max_upload_total_mb == 128

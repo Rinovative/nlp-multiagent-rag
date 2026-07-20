@@ -167,7 +167,7 @@ def test_eleven_pdfs_are_rejected_before_processing():
         for index in range(11)
     ]
 
-    with pytest.raises(UploadValidationError, match="höchstens 10 PDF-Dateien"):
+    with pytest.raises(UploadValidationError, match="no more than 10 PDF files"):
         session.sync(uploads)
 
     assert calls == []
@@ -188,7 +188,7 @@ def test_file_above_limit_is_rejected_before_processing():
     calls = []
     session = manager(calls, max_file_bytes=1024, max_total_bytes=2048)
 
-    with pytest.raises(UploadValidationError, match="pro PDF"):
+    with pytest.raises(UploadValidationError, match="per-PDF limit"):
         session.sync([UploadedDocument("large.pdf", b"x" * 1025)])
 
     assert calls == []
@@ -211,7 +211,7 @@ def test_active_set_above_total_limit_is_rejected_before_processing():
     calls = []
     session = manager(calls)
 
-    with pytest.raises(UploadValidationError, match="Gesamtlimit"):
+    with pytest.raises(UploadValidationError, match="combined limit"):
         session.sync(
             [
                 UploadedDocument("one.pdf", b"A" * 600),
@@ -228,7 +228,7 @@ def test_rejected_selection_does_not_replace_an_active_valid_set():
     session = manager(calls, max_file_bytes=8, max_total_bytes=8)
     session.sync([UploadedDocument("active.pdf", b"A valid")])
 
-    with pytest.raises(UploadValidationError, match="pro PDF"):
+    with pytest.raises(UploadValidationError, match="per-PDF limit"):
         session.sync([UploadedDocument("too-large.pdf", b"B" * 9)])
 
     assert session.active_document_count == 1

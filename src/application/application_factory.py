@@ -21,6 +21,7 @@ Boundaries:
 
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from typing import Any
 
@@ -41,6 +42,7 @@ from . import application_session as session
 __all__ = ["create_application_session", "create_embedding_provider"]
 
 _BYTES_PER_MEGABYTE = 1024 * 1024
+_LOGGER = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=8)
@@ -95,11 +97,21 @@ def _generation_router(
         if not hf_clients:
             from huggingface_hub import InferenceClient
 
+            try:
+                token = config.require_huggingface_token()
+            except configuration.runtime.ConfigurationError:
+                _LOGGER.warning(
+                    "generation_client_construction_failed provider=huggingface "
+                    "model=%s error_category=configuration "
+                    "provider_call_attempted=false",
+                    config.huggingface_generation_model,
+                )
+                raise
             hf_clients.append(
                 InferenceClient(
                     model=config.huggingface_generation_model,
                     provider="auto",
-                    token=config.require_huggingface_token(),
+                    token=token,
                     timeout=config.provider_timeout_seconds,
                 )
             )

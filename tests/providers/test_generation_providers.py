@@ -1,5 +1,7 @@
+import logging
 from types import SimpleNamespace
 
+import huggingface_hub
 import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
@@ -12,7 +14,7 @@ from openai import (
     RateLimitError,
 )
 
-from src import providers
+from src import application, configuration, providers
 
 
 def request():
@@ -72,7 +74,8 @@ def test_huggingface_provider_uses_supported_chat_shape_and_normalizes_usage():
     ("error", "expected_type"),
     [
         (hf_http_error(401), providers.contracts.GenerationAuthenticationError),
-        (hf_http_error(402), providers.contracts.GenerationRateLimitError),
+        (hf_http_error(402), providers.contracts.GenerationCreditsError),
+        (hf_http_error(404), providers.contracts.GenerationModelUnavailableError),
         (hf_http_error(429), providers.contracts.GenerationRateLimitError),
         (hf_http_error(503), providers.contracts.GenerationTemporaryError),
         (hf_http_error(400), providers.contracts.GenerationInvalidRequestError),
@@ -91,6 +94,99 @@ def test_huggingface_sdk_errors_are_classified_without_leaking_detail(
     with pytest.raises(expected_type) as captured:
         provider.generate(request())
     assert "secret-value" not in str(captured.value)
+
+
+@pytest.mark.parametrize("error", [StopIteration(), ValueError("private model detail")])
+def test_huggingface_unserved_model_selection_is_classified(error):
+    provider = providers.huggingface.HuggingFaceGenerationProvider(
+        lambda: FakeHuggingFaceClient(error=error), model_id="unserved-model"
+    )
+
+    with pytest.raises(providers.contracts.GenerationModelUnavailableError):
+        provider.generate(request())
+
+
+def test_huggingface_failure_diagnostics_are_safe_and_distinguish_call_stages(
+    caplog,
+):
+    provider = providers.huggingface.HuggingFaceGenerationProvider(
+        lambda: FakeHuggingFaceClient(error=hf_http_error(429)),
+        model_id="test-model",
+    )
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(providers.contracts.GenerationRateLimitError):
+            provider.generate(request())
+
+    assert "generation_client_constructed provider=huggingface model=test-model" in (
+        caplog.text
+    )
+    assert "generation_request_attempted provider=huggingface model=test-model" in (
+        caplog.text
+    )
+    assert "error_category=rate_limit" in caplog.text
+    assert "safe_http_status_category=4xx" in caplog.text
+    assert "secret-value" not in caplog.text
+
+
+def test_application_factory_configures_auto_inference_provider_and_exact_sdk_call(
+    monkeypatch,
+):
+    clients = []
+    constructor_calls = []
+
+    def client_factory(**kwargs):
+        constructor_calls.append(kwargs)
+        client = FakeHuggingFaceClient()
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(huggingface_hub, "InferenceClient", client_factory)
+    config = configuration.runtime.AppConfig(
+        generation_provider="huggingface",
+        huggingface_api_token="test-placeholder-token",
+        huggingface_generation_model="Qwen/Qwen2.5-7B-Instruct",
+        provider_timeout_seconds=12.0,
+    )
+    router = application.factory._generation_router(config)
+
+    result = router.generate(request(), session_id="test-session")
+
+    assert result.provider_id == "huggingface"
+    assert constructor_calls == [
+        {
+            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "provider": "auto",
+            "token": "test-placeholder-token",
+            "timeout": 12.0,
+        }
+    ]
+    assert clients[0].calls == [
+        {
+            "messages": [{"role": "user", "content": "Question"}],
+            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "max_tokens": 25,
+            "temperature": 0.2,
+        }
+    ]
+
+
+def test_missing_huggingface_configuration_stops_before_client_or_request(
+    caplog,
+):
+    router = application.factory._generation_router(
+        configuration.runtime.AppConfig(generation_provider="huggingface")
+    )
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(configuration.runtime.ConfigurationError):
+            router.generate(request(), session_id="test-session")
+
+    assert "generation_route_selected provider=huggingface" in caplog.text
+    assert "generation_client_construction_failed provider=huggingface" in caplog.text
+    assert "error_category=configuration" in caplog.text
+    assert "generation_client_constructed" not in caplog.text
+    assert "generation_request_attempted" not in caplog.text
 
 
 class FakeOpenAICompletions:
