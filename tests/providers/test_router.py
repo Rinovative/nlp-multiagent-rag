@@ -70,6 +70,16 @@ class UnavailableQuota:
         raise quota.contracts.QuotaUnavailableError("unavailable")
 
 
+class ExhaustedQuota:
+    def __init__(self, reason):
+        self.reason = reason
+        self.reserve_calls = 0
+
+    def reserve(self, **_kwargs):
+        self.reserve_calls += 1
+        raise quota.contracts.QuotaExhaustedError(self.reason)
+
+
 def configured_quota(*, daily_tokens=1000):
     backend = quota.memory.InMemoryQuotaBackend()
     backend.set_limits(
@@ -184,6 +194,64 @@ def test_openai_success_is_authorized_and_reconciled_to_actual_usage():
     assert usage.daily_requests == 1
     assert usage.daily_tokens == 7
     assert free.calls == 0
+
+
+def test_auto_uses_openai_five_times_then_huggingface_for_session_limit():
+    free = FakeProvider("huggingface")
+    openai = FakeProvider("openai")
+    hard_quota = configured_quota()
+    router = providers.router.GenerationRouter(
+        mode="auto",
+        free_provider=free,
+        openai_provider=openai,
+        quota_backend=hard_quota,
+    )
+
+    results = [
+        router.generate(request(), session_id="one-browser-session") for _ in range(6)
+    ]
+
+    assert [result.provider_id for result in results[:5]] == ["openai"] * 5
+    assert all(result.fallback_occurred is False for result in results[:5])
+    assert results[5].provider_id == "huggingface"
+    assert results[5].model_id == "huggingface-model"
+    assert results[5].fallback_occurred is True
+    assert results[5].fallback_reason == "session_requests_exhausted"
+    assert openai.calls == 5
+    assert free.calls == 1
+    assert hard_quota.reserve_calls == 6
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "daily_requests_exhausted",
+        "monthly_requests_exhausted",
+        "daily_tokens_exhausted",
+        "monthly_tokens_exhausted",
+        "openai_disabled",
+    ],
+)
+def test_auto_uses_huggingface_for_each_global_quota_denial(reason):
+    free = FakeProvider("huggingface")
+    openai = FakeProvider("openai")
+    denied_quota = ExhaustedQuota(reason)
+    router = providers.router.GenerationRouter(
+        mode="auto",
+        free_provider=free,
+        openai_provider=openai,
+        quota_backend=denied_quota,
+    )
+
+    result = router.generate(request(), session_id="session")
+
+    assert result.provider_id == "huggingface"
+    assert result.model_id == "huggingface-model"
+    assert result.fallback_occurred is True
+    assert result.fallback_reason == reason
+    assert denied_quota.reserve_calls == 1
+    assert openai.calls == 0
+    assert free.calls == 1
 
 
 def test_auto_falls_back_once_when_quota_is_exhausted():

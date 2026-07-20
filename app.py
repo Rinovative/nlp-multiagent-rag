@@ -7,7 +7,8 @@ Run the Streamlit boundary for the multilingual PDF RAG application.
 Responsibilities:
   - Resolve Streamlit secrets and environment-backed configuration.
   - Maintain one isolated application session across Streamlit reruns.
-  - Render PDF upload, chat, provider attribution, and safe errors.
+  - Render sidebar document management and a focused conversational main area.
+  - Present provider attribution, grounded sources, and safe errors.
 
 Design principles:
   - Keep domain construction lazy and session state explicit.
@@ -39,6 +40,9 @@ from src import (
     quota,
     vectorstore,
 )
+
+
+st.set_page_config(page_title="Multilingual PDF RAG", layout="wide")
 
 
 def _streamlit_secrets() -> dict[str, object]:
@@ -158,87 +162,91 @@ application_session = st.session_state.application_session
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
 
-st.title("Multilingual PDF RAG")
-st.write(
-    "Lade eigene PDF-Dokumente hoch und stelle anschliessend Fragen auf Deutsch "
-    "oder Englisch."
-)
-if config.huggingface_api_token is None:
-    huggingface_is_primary = config.generation_provider == "huggingface" or (
-        config.generation_provider == "auto" and not config.openai_is_configured
+with st.sidebar:
+    st.title("Multilingual PDF RAG")
+    st.write(
+        "Lade PDF-Dokumente hoch. Nach der lokalen Indexierung kannst du im "
+        "Hauptbereich Fragen auf Deutsch oder Englisch stellen."
     )
-    if huggingface_is_primary:
-        st.info(
-            "Die PDF-Indexierung erfolgt lokal. Für Antworten über Hugging Face "
-            "muss HUGGINGFACE_API_TOKEN konfiguriert sein."
+    if config.huggingface_api_token is None:
+        huggingface_is_primary = config.generation_provider == "huggingface" or (
+            config.generation_provider == "auto" and not config.openai_is_configured
         )
-    elif config.generation_provider == "auto" or config.openai_fallback_enabled:
-        st.info(
-            "Die PDF-Indexierung erfolgt lokal. Ein möglicher Hugging-Face-Fallback "
-            "benötigt HUGGINGFACE_API_TOKEN."
-        )
+        if huggingface_is_primary:
+            st.info(
+                "Die PDF-Indexierung erfolgt lokal. Für Antworten über Hugging Face "
+                "muss HUGGINGFACE_API_TOKEN konfiguriert sein."
+            )
+        elif config.generation_provider == "auto" or config.openai_fallback_enabled:
+            st.info(
+                "Die PDF-Indexierung erfolgt lokal. Ein möglicher Hugging-Face-Fallback "
+                "benötigt HUGGINGFACE_API_TOKEN."
+            )
 
-uploaded_files = st.file_uploader(
-    "PDF-Dokumente hochladen",
-    type=["pdf"],
-    accept_multiple_files=True,
-    max_upload_size=config.max_upload_file_mb,
-    help=(
-        f"Höchstens {config.max_upload_files} PDFs, "
-        f"{config.max_upload_file_mb} MB pro Datei und "
-        f"{config.max_upload_total_mb} MB insgesamt. "
-        "Dabei gilt 1 MB = 1 048 576 Byte."
-    ),
-)
+    uploaded_files = st.file_uploader(
+        "PDF-Dokumente hochladen",
+        type=["pdf"],
+        accept_multiple_files=True,
+        max_upload_size=config.max_upload_file_mb,
+        help=(
+            f"Höchstens {config.max_upload_files} PDFs, "
+            f"{config.max_upload_file_mb} MB pro Datei und "
+            f"{config.max_upload_total_mb} MB insgesamt. "
+            "Dabei gilt 1 MB = 1 048 576 Byte."
+        ),
+    )
 
-uploaded_payloads = [
-    (uploaded_file.name, uploaded_file.getvalue())
-    for uploaded_file in (uploaded_files or [])
-]
-selected_size = sum(len(content) for _, content in uploaded_payloads)
-st.caption(
-    f"Ausgewählt: {len(uploaded_payloads)} von {config.max_upload_files} PDFs, "
-    f"zusammen {_format_upload_size(selected_size)} von "
-    f"{config.max_upload_total_mb} MB."
-)
-
-try:
-    uploads = [
-        application.session.UploadedDocument(
-            file_name=file_name,
-            content=content,
-        )
-        for file_name, content in uploaded_payloads
+    uploaded_payloads = [
+        (uploaded_file.name, uploaded_file.getvalue())
+        for uploaded_file in (uploaded_files or [])
     ]
-    with st.spinner("PDF-Dokumente werden lokal verarbeitet und indexiert …"):
-        sync_result = application_session.sync_uploads(uploads)
-except (
-    configuration.runtime.ConfigurationError,
-    embeddings.contracts.EmbeddingError,
-    ingestion.processor.DocumentProcessingError,
-    vectorstore.faiss.FAISSStoreError,
-    application.session.UploadValidationError,
-) as exc:
-    st.error(_safe_ui_error(exc))
-else:
-    if sync_result.changed and sync_result.processed:
-        chunk_count = sum(result.chunk_count for result in sync_result.processed)
-        st.success(
-            f"{len(sync_result.processed)} PDF-Dokument(e) wurden erfolgreich "
-            f"als {chunk_count} durchsuchbare Chunks indexiert."
-        )
-    elif sync_result.changed and not uploads:
-        st.info("Die temporären Dokumente dieser Sitzung wurden entfernt.")
+    selected_size = sum(len(content) for _, content in uploaded_payloads)
+    st.caption(
+        f"Ausgewählt: {len(uploaded_payloads)} von {config.max_upload_files} PDFs, "
+        f"zusammen {_format_upload_size(selected_size)} von "
+        f"{config.max_upload_total_mb} MB."
+    )
 
-st.caption(
-    f"Aktiv: {application_session.active_document_count} Dokument(e), "
-    f"{application_session.vector_store.record_count} Chunks."
-)
+    try:
+        uploads = [
+            application.session.UploadedDocument(
+                file_name=file_name,
+                content=content,
+            )
+            for file_name, content in uploaded_payloads
+        ]
+        with st.spinner("PDF-Dokumente werden lokal verarbeitet und indexiert …"):
+            sync_result = application_session.sync_uploads(uploads)
+    except (
+        configuration.runtime.ConfigurationError,
+        embeddings.contracts.EmbeddingError,
+        ingestion.processor.DocumentProcessingError,
+        vectorstore.faiss.FAISSStoreError,
+        application.session.UploadValidationError,
+    ) as exc:
+        st.error(_safe_ui_error(exc))
+    else:
+        if sync_result.changed and sync_result.processed:
+            chunk_count = sum(result.chunk_count for result in sync_result.processed)
+            st.success(
+                f"{len(sync_result.processed)} PDF-Dokument(e) wurden erfolgreich "
+                f"als {chunk_count} durchsuchbare Chunks indexiert."
+            )
+        elif sync_result.changed and not uploads:
+            st.info("Die temporären Dokumente dieser Sitzung wurden entfernt.")
+
+    st.caption(
+        f"Aktiv: {application_session.active_document_count} Dokument(e), "
+        f"{application_session.vector_store.record_count} Chunks."
+    )
 
 for chat_entry in st.session_state.chat_messages:
     _render_chat_entry(chat_entry)
 
 documents_are_ready = application_session.vector_store.record_count > 0
+if not documents_are_ready:
+    st.info("Lade zuerst PDF-Dokumente über die Seitenleiste hoch.")
+
 user_query = st.chat_input(
     "Frage zu den indexierten Dokumenten eingeben",
     disabled=not documents_are_ready,
