@@ -40,6 +40,8 @@ from . import application_session as session
 
 __all__ = ["create_application_session", "create_embedding_provider"]
 
+_BYTES_PER_MEGABYTE = 1024 * 1024
+
 
 @lru_cache(maxsize=8)
 def _cached_embedding_provider(
@@ -221,7 +223,9 @@ def create_application_session(
     document_manager = session.SessionDocumentManager(
         store_factory=store_factory,
         processor_factory=processor_factory,
-        max_upload_bytes=config.max_upload_mb * 1024 * 1024,
+        max_upload_file_bytes=config.max_upload_file_mb * _BYTES_PER_MEGABYTE,
+        max_upload_total_bytes=config.max_upload_total_mb * _BYTES_PER_MEGABYTE,
+        max_upload_files=config.max_upload_files,
     )
     return session.ApplicationSession(
         session_id=session_id,

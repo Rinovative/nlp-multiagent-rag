@@ -299,11 +299,20 @@ def test_explicit_openai_reports_missing_provider_configuration():
         router.generate(request(), session_id="session")
 
 
-def test_invalid_openai_authentication_never_falls_back():
+@pytest.mark.parametrize(
+    "error",
+    [
+        providers.contracts.GenerationAuthenticationError("invalid"),
+        providers.contracts.GenerationInvalidRequestError("invalid"),
+        providers.contracts.GenerationSafetyError("unsafe"),
+        providers.contracts.GenerationResponseError("malformed"),
+    ],
+)
+def test_non_capacity_openai_failures_never_fall_back(error):
     free = FakeProvider("huggingface")
     openai = FakeProvider(
         "openai",
-        error=providers.contracts.GenerationAuthenticationError("invalid"),
+        error=error,
     )
     router = providers.router.GenerationRouter(
         mode="auto",
@@ -312,7 +321,7 @@ def test_invalid_openai_authentication_never_falls_back():
         quota_backend=configured_quota(),
     )
 
-    with pytest.raises(providers.contracts.GenerationAuthenticationError):
+    with pytest.raises(type(error)):
         router.generate(request(), session_id="session")
     assert free.calls == 0
 

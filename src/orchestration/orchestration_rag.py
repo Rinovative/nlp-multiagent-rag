@@ -7,6 +7,7 @@ Coordinate the three-agent RAG request graph with LangGraph.
 Responsibilities:
   - Load conversation memory and retrieve relevant vector records.
   - Generate one attributed answer through the provider router.
+  - Derive ordered source references from the retrieved record metadata.
   - Persist the completed user and assistant exchange.
 
 Design principles:
@@ -15,19 +16,123 @@ Design principles:
 
 Boundaries:
   - Nodes delegate retrieval, generation, and persistence to injected agents.
-  - Does not construct providers, stores, or application sessions.
+  - Does not render source content or construct providers, stores, or sessions.
 ===============================================================================
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 
 from src import agents, providers
 
-__all__ = ["RAGChatbot", "RAGState"]
+__all__ = ["RAGChatbot", "RAGResult", "RAGState", "SourceReference"]
+
+
+@dataclass(frozen=True)
+class SourceReference:
+    """Identify one retrieved document location without exposing chunk text.
+
+    Parameters
+    ----------
+    document_name
+        Normalized document title or filename safe for plain-text rendering.
+    page_number
+        Positive one-based page number, or ``None`` when metadata has none.
+    """
+
+    document_name: str
+    page_number: int | None = None
+
+    def __post_init__(self) -> None:
+        """Reject empty names and invalid page numbers."""
+
+        if not self.document_name.strip():
+            raise ValueError("document_name must be non-empty")
+        if self.page_number is not None and (
+            isinstance(self.page_number, bool)
+            or not isinstance(self.page_number, int)
+            or self.page_number <= 0
+        ):
+            raise ValueError("page_number must be a positive integer or None")
+
+
+@dataclass(frozen=True)
+class RAGResult:
+    """Combine one attributed generation result with ranked source references.
+
+    Parameters
+    ----------
+    generation
+        Provider-neutral answer and actual provider attribution.
+    sources
+        Deduplicated source references in retrieval-relevance order.
+    """
+
+    generation: providers.contracts.GenerationResult
+    sources: tuple[SourceReference, ...]
+
+    @property
+    def answer(self) -> str:
+        """Return the normalized generated answer."""
+
+        return self.generation.answer
+
+    @property
+    def provider_id(self) -> str:
+        """Return the provider that actually generated the answer."""
+
+        return self.generation.provider_id
+
+    @property
+    def model_id(self) -> str:
+        """Return the model that actually generated the answer."""
+
+        return self.generation.model_id
+
+    @property
+    def fallback_occurred(self) -> bool:
+        """Return whether the router used its single controlled fallback."""
+
+        return self.generation.fallback_occurred
+
+    @property
+    def fallback_reason(self) -> str | None:
+        """Return the machine-readable fallback reason when applicable."""
+
+        return self.generation.fallback_reason
+
+
+def _source_references(records: list[dict[str, Any]]) -> tuple[SourceReference, ...]:
+    """Derive unique safe source references without exposing chunk text."""
+
+    references: list[SourceReference] = []
+    seen: set[tuple[str, int | None]] = set()
+    for record in records:
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        raw_name = metadata.get("document_title") or metadata.get("file_name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            continue
+        document_name = " ".join(raw_name.split())[:200]
+        raw_page = metadata.get("page_number")
+        page_number = (
+            raw_page
+            if isinstance(raw_page, int)
+            and not isinstance(raw_page, bool)
+            and raw_page > 0
+            else None
+        )
+        key = (document_name, page_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        references.append(SourceReference(document_name, page_number))
+    return tuple(references)
 
 
 class RAGState(TypedDict, total=False):
@@ -133,9 +238,7 @@ class RAGChatbot:
         self.memory_agent.add_message(chat_id, "assistant", result.answer)
         return {}
 
-    def process_user_input(
-        self, user_input: str, *, chat_id: str
-    ) -> providers.contracts.GenerationResult:
+    def process_user_input(self, user_input: str, *, chat_id: str) -> RAGResult:
         """Run the complete graph for one validated question.
 
         Parameters
@@ -147,8 +250,8 @@ class RAGChatbot:
 
         Returns
         -------
-        providers.contracts.GenerationResult
-            Normalized attributed answer produced by the generation node.
+        RAGResult
+            Attributed answer and ranked, deduplicated source references.
 
         Raises
         ------
@@ -170,4 +273,7 @@ class RAGChatbot:
             "user_input": user_input.strip(),
         }
         result = self.graph.invoke(initial_state)
-        return result["generation_result"]
+        return RAGResult(
+            generation=result["generation_result"],
+            sources=_source_references(result.get("retrieved_records", [])),
+        )

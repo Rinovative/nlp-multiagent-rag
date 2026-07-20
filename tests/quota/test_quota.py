@@ -230,6 +230,26 @@ def test_redis_adapter_uses_one_atomic_authorization_and_hashes_session_id():
     assert reservation.reserved_tokens == 30
 
 
+def test_redis_adapter_passes_tls_url_to_standard_client(monkeypatch):
+    client = RecordingRedis()
+    calls = []
+
+    def from_url(redis_url, **kwargs):
+        calls.append((redis_url, kwargs))
+        return client
+
+    monkeypatch.setattr(quota.redis.redis, "from_url", from_url)
+    backend = quota.redis.RedisQuotaBackend(
+        "rediss://example.invalid:6380/0",
+        key_prefix="test:{quota}",
+    )
+
+    snapshot = backend.inspect(now=NOW)
+
+    assert snapshot.enabled is True
+    assert calls == [("rediss://example.invalid:6380/0", {"decode_responses": True})]
+
+
 def test_redis_adapter_fails_closed_for_corrupt_counters():
     class CorruptCounterRedis(RecordingRedis):
         def mget(self, _keys):

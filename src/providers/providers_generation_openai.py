@@ -100,6 +100,9 @@ class OpenAIGenerationProvider:
         if isinstance(exc, BadRequestError):
             body = getattr(exc, "body", None)
             code = body.get("code") if isinstance(body, dict) else None
+            nested_error = body.get("error") if isinstance(body, dict) else None
+            if code is None and isinstance(nested_error, dict):
+                code = nested_error.get("code")
             if code in {"content_filter", "safety_violation"}:
                 return contracts.GenerationSafetyError(
                     "OpenAI could not answer this request because of a safety restriction."
@@ -118,8 +121,16 @@ class OpenAIGenerationProvider:
         input_tokens = getattr(usage, "prompt_tokens", None)
         output_tokens = getattr(usage, "completion_tokens", None)
         return contracts.GenerationUsage(
-            input_tokens=input_tokens if isinstance(input_tokens, int) else None,
-            output_tokens=output_tokens if isinstance(output_tokens, int) else None,
+            input_tokens=(
+                input_tokens
+                if isinstance(input_tokens, int) and input_tokens >= 0
+                else None
+            ),
+            output_tokens=(
+                output_tokens
+                if isinstance(output_tokens, int) and output_tokens >= 0
+                else None
+            ),
         )
 
     def generate(
@@ -155,14 +166,20 @@ class OpenAIGenerationProvider:
             response = self._client_factory().chat.completions.create(
                 model=self.model_id,
                 messages=messages,
-                max_tokens=request.max_output_tokens,
-                temperature=0.2,
+                max_completion_tokens=request.max_output_tokens,
             )
         except OpenAIError as exc:
             raise self._translate_error(exc) from exc
 
         try:
-            answer = response.choices[0].message.content
+            choice = response.choices[0]
+            if getattr(choice, "finish_reason", None) == "content_filter":
+                raise contracts.GenerationSafetyError(
+                    "OpenAI could not answer this request because of a safety restriction."
+                )
+            answer = choice.message.content
+        except contracts.GenerationSafetyError:
+            raise
         except (AttributeError, IndexError, TypeError) as exc:
             raise contracts.GenerationResponseError(
                 "OpenAI returned an invalid generation response."

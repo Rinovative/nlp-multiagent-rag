@@ -66,3 +66,38 @@ def test_chat_id_is_explicit_and_histories_do_not_cross_sessions():
         {"role": "user", "content": "other"},
         {"role": "assistant", "content": "answer to other"},
     ]
+
+
+def test_answer_sources_are_deduplicated_in_retrieval_order():
+    class SourceRetriever(FakeRetriever):
+        def retrieve_documents(self, query, history):
+            self.calls.append((query, history))
+            return [
+                {
+                    "text": "first",
+                    "metadata": {"document_title": "Report.pdf", "page_number": 3},
+                },
+                {
+                    "text": "duplicate",
+                    "metadata": {"document_title": "Report.pdf", "page_number": 3},
+                },
+                {
+                    "text": "without page",
+                    "metadata": {"document_title": "Appendix.pdf"},
+                },
+            ]
+
+    chatbot = orchestration.rag.RAGChatbot(
+        retriever_agent=SourceRetriever(),
+        generator_agent=FakeGenerator(),
+        memory_agent=agents.memory.MemoryAgent(
+            memory.in_memory.InMemoryConversationStore(max_history=10)
+        ),
+    )
+
+    result = chatbot.process_user_input("question", chat_id="session")
+
+    assert result.sources == (
+        orchestration.rag.SourceReference("Report.pdf", 3),
+        orchestration.rag.SourceReference("Appendix.pdf", None),
+    )

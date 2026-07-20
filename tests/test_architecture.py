@@ -275,3 +275,18 @@ def _module_path_is_absent(name: str) -> bool:
 
 def test_cli_package_remains_import_free():
     assert src.cli.__all__ == []
+
+
+def test_unsupported_development_container_is_absent():
+    """Reject tracked development-container files, not transient directories."""
+
+    repository_root = Path(__file__).resolve().parents[1]
+    tracked_paths = subprocess.run(
+        ["git", "ls-files", "--", ".devcontainer"],
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+
+    assert tracked_paths == []

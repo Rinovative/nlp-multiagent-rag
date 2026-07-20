@@ -54,14 +54,22 @@ class FakeProcessor:
         )
 
 
-def manager(calls):
+def manager(
+    calls,
+    *,
+    max_file_bytes=1024,
+    max_total_bytes=1024,
+    max_files=10,
+):
     def store_factory():
         return FAISSStore(dimension=2, embedding_model="fake")
 
     return SessionDocumentManager(
         store_factory=store_factory,
         processor_factory=lambda store: FakeProcessor(store, calls),
-        max_upload_bytes=1024,
+        max_upload_file_bytes=max_file_bytes,
+        max_upload_total_bytes=max_total_bytes,
+        max_upload_files=max_files,
     )
 
 
@@ -136,22 +144,74 @@ def test_failed_upload_change_preserves_previous_session_store():
     assert session.store.records[0]["text"] == "A good document"
 
 
-def test_oversized_upload_is_rejected_before_processing():
+def test_ten_pdfs_are_accepted():
     calls = []
-    session = manager(calls)
+    session = manager(calls, max_file_bytes=10, max_total_bytes=100)
+    uploads = [
+        UploadedDocument(f"document-{index}.pdf", f"A{index}".encode("ascii"))
+        for index in range(10)
+    ]
 
-    with pytest.raises(UploadValidationError, match="upload limit"):
+    result = session.sync(uploads)
+
+    assert result.changed is True
+    assert session.active_document_count == 10
+    assert len(calls) == 10
+
+
+def test_eleven_pdfs_are_rejected_before_processing():
+    calls = []
+    session = manager(calls, max_file_bytes=10, max_total_bytes=100)
+    uploads = [
+        UploadedDocument(f"document-{index}.pdf", f"A{index}".encode("ascii"))
+        for index in range(11)
+    ]
+
+    with pytest.raises(UploadValidationError, match="höchstens 10 PDF-Dateien"):
+        session.sync(uploads)
+
+    assert calls == []
+    assert session.store.record_count == 0
+
+
+def test_file_exactly_at_limit_is_accepted():
+    calls = []
+    session = manager(calls, max_file_bytes=4, max_total_bytes=8)
+
+    result = session.sync([UploadedDocument("exact.pdf", b"ABCD")])
+
+    assert result.changed is True
+    assert len(calls) == 1
+
+
+def test_file_above_limit_is_rejected_before_processing():
+    calls = []
+    session = manager(calls, max_file_bytes=1024, max_total_bytes=2048)
+
+    with pytest.raises(UploadValidationError, match="pro PDF"):
         session.sync([UploadedDocument("large.pdf", b"x" * 1025)])
 
     assert calls == []
     assert session.store.record_count == 0
 
 
-def test_combined_upload_limit_is_checked_before_processing():
+def test_active_set_exactly_at_total_limit_is_accepted():
+    calls = []
+    session = manager(calls, max_file_bytes=4, max_total_bytes=8)
+
+    result = session.sync(
+        [UploadedDocument("one.pdf", b"AAAA"), UploadedDocument("two.pdf", b"BBBB")]
+    )
+
+    assert result.changed is True
+    assert len(calls) == 2
+
+
+def test_active_set_above_total_limit_is_rejected_before_processing():
     calls = []
     session = manager(calls)
 
-    with pytest.raises(UploadValidationError, match="combined upload limit"):
+    with pytest.raises(UploadValidationError, match="Gesamtlimit"):
         session.sync(
             [
                 UploadedDocument("one.pdf", b"A" * 600),
@@ -161,6 +221,19 @@ def test_combined_upload_limit_is_checked_before_processing():
 
     assert calls == []
     assert session.store.record_count == 0
+
+
+def test_rejected_selection_does_not_replace_an_active_valid_set():
+    calls = []
+    session = manager(calls, max_file_bytes=8, max_total_bytes=8)
+    session.sync([UploadedDocument("active.pdf", b"A valid")])
+
+    with pytest.raises(UploadValidationError, match="pro PDF"):
+        session.sync([UploadedDocument("too-large.pdf", b"B" * 9)])
+
+    assert session.active_document_count == 1
+    assert session.store.record_count == 1
+    assert session.store.records[0]["text"] == "A valid"
 
 
 def test_importing_application_factory_has_no_external_or_file_side_effects(

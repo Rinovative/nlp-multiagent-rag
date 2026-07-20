@@ -25,7 +25,7 @@ import hashlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from src import ingestion, memory, orchestration, providers, vectorstore
+from src import ingestion, memory, orchestration, vectorstore
 
 __all__ = [
     "ApplicationSession",
@@ -67,10 +67,10 @@ class UploadedDocument:
 
     def __post_init__(self) -> None:
         if not isinstance(self.file_name, str) or not self.file_name.strip():
-            raise UploadValidationError("Every upload needs a non-empty file name.")
+            raise UploadValidationError("Jeder Upload benötigt einen Dateinamen.")
         if not isinstance(self.content, bytes) or not self.content:
             raise UploadValidationError(
-                f"Uploaded file {self.file_name!r} is empty or unreadable."
+                f"Die hochgeladene Datei {self.file_name!r} ist leer oder unlesbar."
             )
 
     @property
@@ -108,8 +108,12 @@ class SessionDocumentManager:
         Factory for isolated empty FAISS stores.
     processor_factory
         Factory that binds ingestion to a candidate store.
-    max_upload_bytes
-        Positive bound applied to each file and the deduplicated combined set.
+    max_upload_file_bytes
+        Positive byte bound applied to every selected PDF.
+    max_upload_total_bytes
+        Positive byte bound applied to the complete selected upload set.
+    max_upload_files
+        Positive maximum number of selected PDFs.
 
     Notes
     -----
@@ -124,15 +128,28 @@ class SessionDocumentManager:
         processor_factory: Callable[
             [vectorstore.faiss.FAISSStore], ingestion.processor.DocumentProcessor
         ],
-        max_upload_bytes: int,
+        max_upload_file_bytes: int,
+        max_upload_total_bytes: int,
+        max_upload_files: int,
     ) -> None:
-        """Create a manager with candidate-store factories and one upload bound."""
+        """Create a manager with candidate-store factories and upload bounds."""
 
-        if not isinstance(max_upload_bytes, int) or max_upload_bytes <= 0:
-            raise ValueError("max_upload_bytes must be a positive integer")
+        for name, value in (
+            ("max_upload_file_bytes", max_upload_file_bytes),
+            ("max_upload_total_bytes", max_upload_total_bytes),
+            ("max_upload_files", max_upload_files),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if max_upload_total_bytes < max_upload_file_bytes:
+            raise ValueError(
+                "max_upload_total_bytes must be at least max_upload_file_bytes"
+            )
         self._store_factory = store_factory
         self._processor_factory = processor_factory
-        self.max_upload_bytes = max_upload_bytes
+        self.max_upload_file_bytes = max_upload_file_bytes
+        self.max_upload_total_bytes = max_upload_total_bytes
+        self.max_upload_files = max_upload_files
         self.store = store_factory()
         self._active_signature: tuple[str, ...] = ()
         self._prepared_by_hash: dict[str, ingestion.processor.PreparedDocument] = {}
@@ -153,7 +170,7 @@ class SessionDocumentManager:
         Raises
         ------
         UploadValidationError
-            If an individual or combined upload limit is exceeded.
+            If the file-count, individual-size, or combined-size limit is exceeded.
         RuntimeError
             If candidate preparation, embedding, indexing, or persistence fails.
 
@@ -163,24 +180,32 @@ class SessionDocumentManager:
         leaves the previous active store and upload signature intact.
         """
 
+        if len(uploads) > self.max_upload_files:
+            raise UploadValidationError(
+                f"Es können höchstens {self.max_upload_files} PDF-Dateien "
+                "gleichzeitig ausgewählt werden."
+            )
+
+        for upload in uploads:
+            if len(upload.content) > self.max_upload_file_bytes:
+                raise UploadValidationError(
+                    f"Die Datei {upload.file_name!r} überschreitet das Limit von "
+                    f"{self.max_upload_file_bytes} Byte pro PDF."
+                )
+
+        total_upload_bytes = sum(len(upload.content) for upload in uploads)
+        if total_upload_bytes > self.max_upload_total_bytes:
+            raise UploadValidationError(
+                "Die ausgewählten PDFs überschreiten das Gesamtlimit von "
+                f"{self.max_upload_total_bytes} Byte."
+            )
+
         unique_uploads: list[UploadedDocument] = []
         seen_hashes: set[str] = set()
         for upload in uploads:
-            if len(upload.content) > self.max_upload_bytes:
-                raise UploadValidationError(
-                    f"{upload.file_name!r} exceeds the configured upload limit of "
-                    f"{self.max_upload_bytes} bytes."
-                )
             if upload.content_hash not in seen_hashes:
                 unique_uploads.append(upload)
                 seen_hashes.add(upload.content_hash)
-
-        total_upload_bytes = sum(len(upload.content) for upload in unique_uploads)
-        if total_upload_bytes > self.max_upload_bytes:
-            raise UploadValidationError(
-                "The active documents exceed the configured combined upload limit "
-                f"of {self.max_upload_bytes} bytes."
-            )
 
         signature = tuple(sorted(seen_hashes))
         if signature == self._active_signature:
@@ -216,6 +241,12 @@ class SessionDocumentManager:
             processed=tuple(newly_processed),
             active_document_ids=signature,
         )
+
+    @property
+    def active_document_count(self) -> int:
+        """Return the number of content-unique active documents."""
+
+        return len(self._active_signature)
 
     def clear(self) -> None:
         """Discard all documents and cached preparations for this manager.
@@ -277,6 +308,12 @@ class ApplicationSession:
 
         return self.document_manager.store
 
+    @property
+    def active_document_count(self) -> int:
+        """Return the number of active content-unique documents."""
+
+        return self.document_manager.active_document_count
+
     def sync_uploads(self, uploads: Sequence[UploadedDocument]) -> UploadSyncResult:
         """Activate uploads and invalidate the graph when documents change.
 
@@ -296,7 +333,7 @@ class ApplicationSession:
             self._chatbot = None
         return result
 
-    def ask(self, question: str) -> providers.contracts.GenerationResult:
+    def ask(self, question: str) -> orchestration.rag.RAGResult:
         """Answer one question through the lazily rebuilt session graph.
 
         Parameters
@@ -306,8 +343,8 @@ class ApplicationSession:
 
         Returns
         -------
-        providers.contracts.GenerationResult
-            Answer with actual provider, model, usage, and fallback attribution.
+        orchestration.rag.RAGResult
+            Answer with actual provider attribution and ranked source references.
 
         Raises
         ------

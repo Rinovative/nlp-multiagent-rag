@@ -1,4 +1,4 @@
-[Interaktive Streamlit-Demo öffnen](https://rinovative-nlp-multiagent-rag.streamlit.app/)\
+[Interaktive Streamlit-Demo öffnen](https://nlp-multiagent-rag.streamlit.app/)\
 _Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
 # NLP Multi-Agent RAG (Wahlfachprojekt)
@@ -14,7 +14,7 @@ _Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
 Dieses Wahlfachprojekt beantwortet Fragen zu hochgeladenen PDF-Dokumenten mit einer mehrsprachigen Retrieval-Augmented-Generation-Pipeline (RAG). Die Dokumente werden strukturbewusst verarbeitet und in überlappende Chunks zerlegt. Lokale Embeddings mit `intfloat/multilingual-e5-small` erschliessen den Inhalt für die semantische Suche in einem sitzungseigenen FAISS-Index.
 
-LangGraph orchestriert drei klar getrennte Rollen: Der Retriever Agent sucht relevante Textstellen, der Memory Agent stellt den Gesprächskontext bereit und der Generator Agent formuliert die Antwort. Die Generierung erfolgt kostenlos über Hugging Face Inference Providers oder optional über OpenAI. Jeder OpenAI-Aufruf wird zuvor atomar durch ein Redis-basiertes Kontingent autorisiert. Browser-Sitzungen halten Uploads, Vektoren und Gesprächsverlauf voneinander getrennt.
+LangGraph orchestriert drei klar getrennte Rollen: Der Retriever Agent sucht relevante Textstellen, der Memory Agent stellt den Gesprächskontext bereit und der Generator Agent formuliert die Antwort. Die Chat-Oberfläche zeigt zu jeder erfolgreichen Antwort den tatsächlich verwendeten Provider sowie deduplizierte Dokument- und Seitenhinweise. Die Generierung erfolgt über den kontingentgeschützten OpenAI-Pfad oder kontrolliert über Hugging Face Inference Providers. Browser-Sitzungen halten Uploads, Vektoren und Gesprächsverlauf voneinander getrennt.
 
 <details>
 <summary><strong>Dokumentverarbeitung und Chunking</strong></summary>
@@ -22,7 +22,7 @@ LangGraph orchestriert drei klar getrennte Rollen: Der Retriever Agent sucht rel
 - `pdfplumber` extrahiert Text, Seiten- und Layoutinformationen direkt aus PDF-Dateien.
 - Die Vorverarbeitung normalisiert Text, erkennt wiederkehrende Kopf- und Fusszeilen und leitet typografische Strukturmerkmale ab.
 - Der eigene Chunker erhält Dokument-, Seiten-, Abschnitts- und Positionsmetadaten und bildet reproduzierbare Chunk-IDs.
-- Upload-Grössen, Dateityp und Texteingaben werden vor der Verarbeitung begrenzt und validiert.
+- Vor der Verarbeitung gelten höchstens zehn PDFs, 64 MB pro Datei und 128 MB für die gesamte Auswahl. Dabei entspricht 1 MB genau 1 048 576 Byte.
 
 Die strukturbezogene Segmentierung ist eine Implementierungseigenschaft; eine höhere Retrieval-Qualität gegenüber anderen Chunking-Verfahren wurde im Projekt nicht experimentell nachgewiesen.
 
@@ -41,7 +41,7 @@ Die strukturbezogene Segmentierung ist eine Implementierungseigenschaft; eine h�
 <details>
 <summary><strong>Multi-Agent-Orchestrierung</strong></summary>
 
-Der feste LangGraph-Ablauf lädt zuerst den sitzungsspezifischen Verlauf, führt danach das Retrieval aus, generiert genau eine Antwort und speichert abschliessend den neuen Dialogzug. Die Streamlit-Oberfläche bleibt eine dünne Grenze; Verarbeitung, Retrieval, Speicher und Provider-Routing liegen in typisierten Anwendungskomponenten.
+Der feste LangGraph-Ablauf lädt zuerst den sitzungsspezifischen Verlauf, führt danach das Retrieval aus, generiert genau eine Antwort und speichert abschliessend den neuen Dialogzug. Das typisierte Ergebnis enthält zusätzlich deduplizierte Quellenhinweise in Retrieval-Reihenfolge, ohne die gefundenen Chunks ein zweites Mal abzurufen. Die Streamlit-Oberfläche bleibt eine dünne Grenze; Verarbeitung, Retrieval, Speicher und Provider-Routing liegen in typisierten Anwendungskomponenten.
 
 </details>
 
@@ -56,7 +56,7 @@ Der feste LangGraph-Ablauf lädt zuerst den sitzungsspezifischen Verlauf, führt
 | `auto` | Verwendet OpenAI, wenn Schlüssel und Redis-Kontingent verfügbar sind; andernfalls oder bei begrenzten temporären Fehlern erfolgt ein einmaliger Hugging-Face-Fallback. Ohne OpenAI-Konfiguration wird direkt Hugging Face verwendet. |
 | `openai` | Verwendet den kontingentgeschützten OpenAI-Pfad. Ein Hugging-Face-Fallback ist nur mit `OPENAI_FALLBACK_ENABLED=true` aktiv. |
 
-Das Redis-Backend reserviert Anfragen und Token atomar per Lua-Skript. Es begrenzt Tages-, Monats- und Sitzungsnutzung und kann vom Betreiber sofort deaktiviert werden. Ist Redis nicht erreichbar, wird keine neue OpenAI-Nutzung unkontrolliert freigegeben; je nach Modus wird sicher abgebrochen oder auf Hugging Face zurückgefallen. Öffentliche Besucher geben niemals API-Schlüssel ein.
+Das Redis-Backend reserviert Anfragen und Token atomar per Lua-Skript. Es begrenzt Tages-, Monats- und Sitzungsnutzung und kann vom Betreiber sofort deaktiviert werden. OpenAI verwendet `gpt-5.4-mini` über `/v1/chat/completions` mit höchstens 384 Ausgabetokens; zusätzlicher Reasoning-Aufwand wird nicht aktiviert. Ist Redis nicht erreichbar, wird keine neue OpenAI-Nutzung unkontrolliert freigegeben; je nach Modus wird sicher abgebrochen oder auf Hugging Face zurückgefallen. Öffentliche Besucher geben niemals API-Schlüssel ein.
 
 </details>
 
@@ -70,7 +70,7 @@ Jede Streamlit-Browser-Sitzung besitzt eine eigene Sitzungs-ID, ein eigenes Uplo
 <details>
 <summary><strong>Qualitätssicherung</strong></summary>
 
-Die deterministische Testsuite deckt unter anderem Importgrenzen, Konfiguration, PDF-Verarbeitung, Chunking, Embeddings, FAISS, Provider-Routing, Kontingente, CLI, Sitzungsisolation und die Streamlit-Grenze ab. Black, Ruff und Mypy sind als Entwicklungsprüfungen konfiguriert; die CI führt dieselben Kernprüfungen unter Python 3.12 aus.
+Die deterministische Testsuite deckt unter anderem Importgrenzen, Konfiguration, PDF-Verarbeitung, Upload-Limits, Chunking, Embeddings, FAISS, Chat-Verhalten, Quellenhinweise, Provider-Routing, Kontingente, CLI, Sitzungsisolation und die Streamlit-Grenze ab. Black, Ruff und Mypy sind als Entwicklungsprüfungen konfiguriert; die CI führt dieselben Kernprüfungen unter Python 3.12 aus.
 
 </details>
 
@@ -117,7 +117,8 @@ flowchart TD
     A -. begrenzter Fallback .-> H
     H --> Z[Generierte Antwort]
     A --> Z
-    Z --> S[Gespräch speichern]
+    Z --> V[Quellenhinweise]
+    V --> S[Gespräch speichern]
 ```
 
 </details>
@@ -129,7 +130,7 @@ flowchart TD
 <details>
 <summary><strong>Empfohlen: Poetry und Hugging Face</strong></summary>
 
-Voraussetzungen sind Git, Python 3.12 und Poetry 2.x. Die kostenlose Generierungsroute benötigt ein persönliches Hugging-Face-Token; die lokalen Embeddings benötigen keinen API-Schlüssel.
+Voraussetzungen sind Git, Python 3.12 und Poetry 2.x. Die Hugging-Face-Generierungsroute benötigt ein persönliches Token; die lokalen Embeddings benötigen keinen API-Schlüssel.
 
 ```bash
 git clone https://github.com/Rinovative/nlp-multiagent-rag.git
@@ -170,7 +171,7 @@ poetry run streamlit run app.py
 4. Für den optionalen OpenAI-Pfad zusätzlich `OPENAI_API_KEY`, `REDIS_URL` und die gewünschte Routing-Konfiguration setzen.
 5. Deployment-Logs prüfen und danach Upload, Retrieval und eine vollständige Antwort in einer Test-Sitzung validieren.
 
-Geheimnisse gehören ausschliesslich in die Streamlit-Secrets und dürfen weder in Git noch in die README oder in Logausgaben übernommen werden. Der oben verlinkte öffentliche Endpunkt ist erreichbar; die Neubereitstellung dieses Quellstands wird separat in Streamlit Community Cloud validiert.
+Geheimnisse gehören ausschliesslich in die Streamlit-Secrets und dürfen weder in Git noch in die README oder in Logausgaben übernommen werden. Der oben verlinkte Endpunkt ist die vorgesehene öffentliche Adresse; die Bereitstellung dieses Quellstands und der anonyme Zugriff werden separat in Streamlit Community Cloud validiert.
 
 </details>
 
@@ -185,16 +186,18 @@ Die Vorlage [`.env.template`](.env.template) enthält sämtliche unterstützten 
 | `HUGGINGFACE_API_TOKEN` | Token für Hugging Face Inference Providers | Für jede verwendete Hugging-Face-Route erforderlich |
 | `HUGGINGFACE_GENERATION_MODEL` | Hosted-Generation-Modell | `Qwen/Qwen2.5-7B-Instruct` |
 | `OPENAI_API_KEY` | Betreiber-Schlüssel für OpenAI | Nur für OpenAI erforderlich |
-| `OPENAI_GENERATION_MODEL` | OpenAI-Modell | `gpt-4o-mini` |
+| `OPENAI_GENERATION_MODEL` | OpenAI-Modell für Chat Completions | `gpt-5.4-mini` |
 | `OPENAI_FALLBACK_ENABLED` | Erlaubt im Modus `openai` einen begrenzten Hugging-Face-Fallback | `false` |
 | `REDIS_URL` | Redis-Verbindung für atomare OpenAI-Kontingente | Für OpenAI erforderlich |
 | `OPENAI_QUOTA_KEY_PREFIX` | Namensraum der Kontingentschlüssel | `nlp-rag:{openai-quota}` |
 | `EMBEDDING_MODEL` | Lokales SentenceTransformers-Modell | `intfloat/multilingual-e5-small` |
 | `EMBEDDING_DIMENSION` | Erwartete Vektordimension | `384` |
 | `EMBEDDING_BATCH_SIZE` | Batch-Grösse der Embeddings | `32` |
-| `MAX_UPLOAD_MB` | Gesamtgrösse des aktiven Upload-Sets | `20` |
-| `MAX_INPUT_CHARACTERS` | Maximale Länge der Frage | `24000` |
-| `MAX_OUTPUT_TOKENS` | Maximale Generierungslänge | `512` |
+| `MAX_UPLOAD_FILE_MB` | Maximale Grösse pro PDF; 1 MB = 1 048 576 Byte | `64` |
+| `MAX_UPLOAD_TOTAL_MB` | Maximale Gesamtgrösse der aktiven Auswahl | `128` |
+| `MAX_UPLOAD_FILES` | Maximale Anzahl gleichzeitig ausgewählter PDFs | `10` |
+| `MAX_INPUT_CHARACTERS` | Maximale Zeichenanzahl für Systemtext, Verlauf, Kontext und Frage | `24000` |
+| `MAX_OUTPUT_TOKENS` | Maximale Generierungslänge | `384` |
 | `MAX_HISTORY_MESSAGES` | Anzahl berücksichtigter Verlaufsnachrichten | `10` |
 | `RETRIEVAL_TOP_K` | Anzahl abgerufener Chunks | `5` |
 | `PROVIDER_TIMEOUT_SECONDS` | Zeitlimit pro Provider-Aufruf | `45` |
@@ -209,10 +212,11 @@ Die Vorlage [`.env.template`](.env.template) enthält sämtliche unterstützten 
 Die Betreiber-CLI liest `REDIS_URL` aus `.env` oder akzeptiert `--redis-url`. Sie gibt keine Redis-Zugangsdaten aus.
 
 ```bash
-poetry run python -m src.cli.cli_quota inspect
-poetry run python -m src.cli.cli_quota set-limits --daily-requests 100 --monthly-requests 1000 --daily-tokens 100000 --monthly-tokens 1000000 --session-requests 10 --session-window-seconds 3600
-poetry run python -m src.cli.cli_quota disable
-poetry run python -m src.cli.cli_quota enable
+poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' inspect
+poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' set-limits --daily-requests 30 --monthly-requests 300 --daily-tokens 100000 --monthly-tokens 1000000 --session-requests 5 --session-window-seconds 3600
+poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' enable
+poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' inspect
+poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' disable
 ```
 
 </details>
@@ -336,6 +340,6 @@ Dieses Projekt steht unter der [MIT-Lizenz](LICENSE).
 - [SentenceTransformers – Dokumentation](https://www.sbert.net/).
 - [Modellkarte `intfloat/multilingual-e5-small`](https://huggingface.co/intfloat/multilingual-e5-small).
 - [Hugging Face Inference Providers – Dokumentation](https://huggingface.co/docs/inference-providers/index) und [Modellkarte `Qwen/Qwen2.5-7B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct).
-- [OpenAI API – Dokumentation](https://developers.openai.com/api/docs).
+- [OpenAI Chat Completions – API-Referenz](https://developers.openai.com/api/reference/chat-completions/overview/) und [Modellkarte `gpt-5.4-mini`](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
 - [Redis Lua Scripting – Dokumentation](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/).
 - [Streamlit Community Cloud – Dokumentation](https://docs.streamlit.io/deploy/streamlit-community-cloud).

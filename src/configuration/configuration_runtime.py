@@ -63,8 +63,12 @@ class AppConfig:
         Fixed vector dimension expected from the local embedding model.
     embedding_batch_size
         Positive number of document passages per local embedding batch.
-    max_upload_mb
-        Positive per-file and combined upload bound in mebibytes.
+    max_upload_file_mb
+        Positive per-file upload bound in binary megabytes.
+    max_upload_total_mb
+        Positive combined active-set upload bound in binary megabytes.
+    max_upload_files
+        Positive maximum number of selected PDF files.
     max_input_characters
         Positive character bound for assembled generation input.
     max_output_tokens
@@ -86,16 +90,18 @@ class AppConfig:
     huggingface_api_token: str | None = None
     huggingface_generation_model: str = "Qwen/Qwen2.5-7B-Instruct"
     openai_api_key: str | None = None
-    openai_generation_model: str = "gpt-4o-mini"
+    openai_generation_model: str = "gpt-5.4-mini"
     openai_fallback_enabled: bool = False
     redis_url: str | None = None
     quota_key_prefix: str = "nlp-rag:{openai-quota}"
     embedding_model: str = "intfloat/multilingual-e5-small"
     embedding_dimension: int = 384
     embedding_batch_size: int = 32
-    max_upload_mb: int = 20
+    max_upload_file_mb: int = 64
+    max_upload_total_mb: int = 128
+    max_upload_files: int = 10
     max_input_characters: int = 24_000
-    max_output_tokens: int = 512
+    max_output_tokens: int = 384
     max_history_messages: int = 10
     retrieval_top_k: int = 5
     provider_timeout_seconds: float = 45.0
@@ -118,7 +124,9 @@ class AppConfig:
         for integer_name, integer_value in (
             ("EMBEDDING_DIMENSION", self.embedding_dimension),
             ("EMBEDDING_BATCH_SIZE", self.embedding_batch_size),
-            ("MAX_UPLOAD_MB", self.max_upload_mb),
+            ("MAX_UPLOAD_FILE_MB", self.max_upload_file_mb),
+            ("MAX_UPLOAD_TOTAL_MB", self.max_upload_total_mb),
+            ("MAX_UPLOAD_FILES", self.max_upload_files),
             ("MAX_INPUT_CHARACTERS", self.max_input_characters),
             ("MAX_OUTPUT_TOKENS", self.max_output_tokens),
             ("MAX_HISTORY_MESSAGES", self.max_history_messages),
@@ -130,6 +138,10 @@ class AppConfig:
                 or integer_value <= 0
             ):
                 raise ConfigurationError(f"{integer_name} must be a positive integer.")
+        if self.max_upload_total_mb < self.max_upload_file_mb:
+            raise ConfigurationError(
+                "MAX_UPLOAD_TOTAL_MB must be at least MAX_UPLOAD_FILE_MB."
+            )
         if self.provider_timeout_seconds <= 0:
             raise ConfigurationError("PROVIDER_TIMEOUT_SECONDS must be positive.")
 
@@ -246,7 +258,13 @@ class AppConfig:
             embedding_batch_size=integer(
                 "EMBEDDING_BATCH_SIZE", defaults.embedding_batch_size
             ),
-            max_upload_mb=integer("MAX_UPLOAD_MB", defaults.max_upload_mb),
+            max_upload_file_mb=integer(
+                "MAX_UPLOAD_FILE_MB", defaults.max_upload_file_mb
+            ),
+            max_upload_total_mb=integer(
+                "MAX_UPLOAD_TOTAL_MB", defaults.max_upload_total_mb
+            ),
+            max_upload_files=integer("MAX_UPLOAD_FILES", defaults.max_upload_files),
             max_input_characters=integer(
                 "MAX_INPUT_CHARACTERS", defaults.max_input_characters
             ),

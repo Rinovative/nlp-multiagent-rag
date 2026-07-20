@@ -3,7 +3,14 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
-from openai import AuthenticationError, BadRequestError, RateLimitError
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from src import providers
 
@@ -97,7 +104,10 @@ class FakeOpenAICompletions:
             raise self.error
         return SimpleNamespace(
             choices=[
-                SimpleNamespace(message=SimpleNamespace(content=" OpenAI answer "))
+                SimpleNamespace(
+                    message=SimpleNamespace(content=" OpenAI answer "),
+                    finish_reason="stop",
+                )
             ],
             usage=SimpleNamespace(prompt_tokens=9, completion_tokens=4),
         )
@@ -119,16 +129,18 @@ def openai_error(error_type, status_code, *, body=None):
 def test_openai_provider_normalizes_actual_usage():
     client = FakeOpenAIClient()
     provider = providers.openai.OpenAIGenerationProvider(
-        lambda: client, model_id="gpt-4o-mini"
+        lambda: client, model_id="gpt-5.4-mini"
     )
 
     result = provider.generate(request())
 
     assert result.answer == "OpenAI answer"
     assert result.provider_id == "openai"
-    assert result.model_id == "gpt-4o-mini"
+    assert result.model_id == "gpt-5.4-mini"
     assert result.usage == providers.contracts.GenerationUsage(9, 4)
-    assert client.chat.completions.calls[0]["max_tokens"] == 25
+    assert client.chat.completions.calls[0]["max_completion_tokens"] == 25
+    assert "max_tokens" not in client.chat.completions.calls[0]
+    assert "temperature" not in client.chat.completions.calls[0]
 
 
 @pytest.mark.parametrize(
@@ -143,6 +155,21 @@ def test_openai_provider_normalizes_actual_usage():
             providers.contracts.GenerationRateLimitError,
         ),
         (
+            APIConnectionError(
+                message="secret-value",
+                request=httpx.Request("POST", "https://api.openai.com"),
+            ),
+            providers.contracts.GenerationTemporaryError,
+        ),
+        (
+            APITimeoutError(httpx.Request("POST", "https://api.openai.com")),
+            providers.contracts.GenerationTemporaryError,
+        ),
+        (
+            openai_error(InternalServerError, 500),
+            providers.contracts.GenerationTemporaryError,
+        ),
+        (
             openai_error(BadRequestError, 400),
             providers.contracts.GenerationInvalidRequestError,
         ),
@@ -154,8 +181,39 @@ def test_openai_provider_normalizes_actual_usage():
 )
 def test_openai_sdk_errors_are_classified_without_leaking_detail(error, expected_type):
     provider = providers.openai.OpenAIGenerationProvider(
-        lambda: FakeOpenAIClient(error=error), model_id="gpt-4o-mini"
+        lambda: FakeOpenAIClient(error=error), model_id="gpt-5.4-mini"
     )
     with pytest.raises(expected_type) as captured:
         provider.generate(request())
     assert "secret-value" not in str(captured.value)
+
+
+def test_openai_content_filter_finish_reason_is_a_safety_error():
+    client = FakeOpenAIClient()
+    client.chat.completions.create = lambda **_kwargs: SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=None), finish_reason="content_filter"
+            )
+        ],
+        usage=None,
+    )
+    provider = providers.openai.OpenAIGenerationProvider(
+        lambda: client, model_id="gpt-5.4-mini"
+    )
+
+    with pytest.raises(providers.contracts.GenerationSafetyError):
+        provider.generate(request())
+
+
+def test_openai_malformed_response_is_classified_safely():
+    client = FakeOpenAIClient()
+    client.chat.completions.create = lambda **_kwargs: SimpleNamespace(
+        choices=[], usage=None
+    )
+    provider = providers.openai.OpenAIGenerationProvider(
+        lambda: client, model_id="gpt-5.4-mini"
+    )
+
+    with pytest.raises(providers.contracts.GenerationResponseError):
+        provider.generate(request())
