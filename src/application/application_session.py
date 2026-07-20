@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from src import ingestion, memory, orchestration, vectorstore
 
@@ -38,6 +39,17 @@ __all__ = [
 
 class UploadValidationError(ValueError):
     """Represent a UI-safe upload rejection before document processing."""
+
+
+class _DocumentPreparer(Protocol):
+    """Describe candidate-document preparation without store mutation."""
+
+    def prepare_bytes(
+        self, content: bytes, /, *, file_name: str
+    ) -> ingestion.processor.PreparedDocument:
+        """Prepare one uploaded PDF for candidate-store insertion."""
+
+        ...
 
 
 @dataclass(frozen=True)
@@ -125,9 +137,7 @@ class SessionDocumentManager:
         self,
         *,
         store_factory: Callable[[], vectorstore.faiss.FAISSStore],
-        processor_factory: Callable[
-            [vectorstore.faiss.FAISSStore], ingestion.processor.DocumentProcessor
-        ],
+        processor_factory: Callable[[vectorstore.faiss.FAISSStore], _DocumentPreparer],
         max_upload_file_bytes: int,
         max_upload_total_bytes: int,
         max_upload_files: int,
@@ -215,7 +225,7 @@ class SessionDocumentManager:
             )
 
         candidate_store = self._store_factory()
-        processor: ingestion.processor.DocumentProcessor | None = None
+        processor: _DocumentPreparer | None = None
         candidate_prepared: dict[str, ingestion.processor.PreparedDocument] = {}
         newly_processed: list[ingestion.processor.ProcessingResult] = []
 

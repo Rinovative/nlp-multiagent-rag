@@ -29,10 +29,11 @@ import tempfile
 import uuid
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Protocol, Sequence, cast
 
 import faiss
 import numpy as np
+from numpy.typing import NDArray
 
 from src import ingestion
 
@@ -52,6 +53,17 @@ SNAPSHOT_SCHEMA_VERSION = 1
 INDEX_FILENAME = "index.faiss"
 MANIFEST_FILENAME = "manifest.json"
 CURRENT_FILENAME = "CURRENT"
+
+
+class _FaissSearchIndex(Protocol):
+    """Describe the two-argument Python FAISS search wrapper."""
+
+    def search(
+        self, query: NDArray[np.float32], result_count: int, /
+    ) -> tuple[NDArray[np.float32], NDArray[np.int64]]:
+        """Return distance and position matrices for a query batch."""
+
+        ...
 
 
 class FAISSStoreError(RuntimeError):
@@ -259,7 +271,8 @@ class FAISSStore:
             return []
 
         result_count = min(k, self.index.ntotal)
-        distances, positions = self.index.search(query.reshape(1, -1), result_count)
+        search_index = cast(_FaissSearchIndex, self.index)
+        distances, positions = search_index.search(query.reshape(1, -1), result_count)
         results: list[dict[str, Any]] = []
         for distance, position in zip(distances[0], positions[0], strict=True):
             if position < 0 or position >= len(self._records):

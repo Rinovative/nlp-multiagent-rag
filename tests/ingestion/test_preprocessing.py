@@ -5,7 +5,7 @@ from src import ingestion
 PdfPreprocessor = ingestion.preprocessing.PdfPreprocessor
 
 
-def paragraph(text, *, size=12.0, y=200.0):
+def paragraph(text, *, size: float | None = 12.0, y=200.0):
     return {
         "text": text,
         "font_size": size,

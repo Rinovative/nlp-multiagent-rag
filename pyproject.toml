@@ -32,6 +32,7 @@ pre-commit = "^4.2.0"
 pytest = "^8.4.1"
 mypy = "^1.16.1"
 httpx = "^0.28.1"
+pyright = "^1.1.411"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -50,6 +51,19 @@ ignore_missing_imports = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[tool.pyright]
+include = ["src", "app.py", "tests"]
+exclude = [
+    ".mypy_cache",
+    ".pytest_cache",
+    ".pytest-tmp",
+    ".ruff_cache",
+    ".test-artifacts",
+    "**/__pycache__",
+]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
 
 [build-system]
 requires = ["poetry-core"]

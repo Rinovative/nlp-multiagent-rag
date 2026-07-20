@@ -133,11 +133,6 @@ def _safe_ui_error(exc: Exception) -> str:
         return "The document search index is currently unavailable."
     if isinstance(exc, providers.contracts.GenerationSafetyError):
         return "The request could not be answered because of a safety restriction."
-    if isinstance(exc, providers.contracts.GenerationFallbackError):
-        return (
-            "The free fallback provider is temporarily unavailable. "
-            "Please try again later."
-        )
     if isinstance(
         exc,
         (
@@ -146,6 +141,39 @@ def _safe_ui_error(exc: Exception) -> str:
         ),
     ):
         return "Answer generation is not configured. Please contact the site owner."
+    if isinstance(exc, providers.contracts.GenerationFallbackError):
+        provider_error_type = exc.provider_error_type
+        if issubclass(
+            provider_error_type,
+            (
+                providers.contracts.GenerationAuthenticationError,
+                providers.contracts.GenerationConfigurationError,
+            ),
+        ):
+            return (
+                "The free fallback provider is not configured correctly. "
+                "Please try again later."
+            )
+        if issubclass(provider_error_type, providers.contracts.GenerationCreditsError):
+            return (
+                "The free fallback provider has reached its usage limit. "
+                "Please try again later."
+            )
+        if issubclass(
+            provider_error_type,
+            (
+                providers.contracts.GenerationModelUnavailableError,
+                providers.contracts.GenerationRateLimitError,
+                providers.contracts.GenerationTemporaryError,
+            ),
+        ):
+            return (
+                "The free fallback provider is temporarily unavailable. "
+                "Please try again later."
+            )
+        if issubclass(provider_error_type, providers.contracts.GenerationSafetyError):
+            return "The request could not be answered because of a safety restriction."
+        return "Answer generation is currently unavailable. Please try again later."
     if isinstance(exc, providers.contracts.GenerationModelUnavailableError):
         return "The configured generation model is currently unavailable."
     if isinstance(
@@ -158,7 +186,7 @@ def _safe_ui_error(exc: Exception) -> str:
     ):
         return "Answer generation is temporarily unavailable. Please try again later."
     if isinstance(exc, providers.contracts.GenerationError):
-        return "Answer generation is currently unavailable."
+        return "Answer generation is currently unavailable. Please try again later."
     if isinstance(exc, quota.contracts.QuotaError):
         return "The protected OpenAI allowance is currently unavailable."
     return "The request could not be processed."

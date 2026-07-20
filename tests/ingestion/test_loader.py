@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from src import ingestion
+from src import ingestion, vectorstore
 
 UniversalPDFLoader = ingestion.loader.UniversalPDFLoader
 
@@ -112,13 +112,23 @@ def test_multiline_paragraph_metadata_is_final_and_deterministic():
 
 
 def test_processor_translates_unexpected_parser_failure_without_leaking_detail():
+    class UnusedEmbeddingProvider:
+        model_id = "unused"
+        dimension = 2
+
+        def embed_documents(self, texts):
+            return [[1.0, 0.0] for _text in texts]
+
+        def embed_query(self, text):
+            return [1.0, 0.0]
+
     class FailingLoader:
-        def load_pdf(self, *_args, **_kwargs):
+        def load_pdf(self, content, /, *, file_name, extract_tables=True):
             raise RuntimeError("sensitive parser path")
 
     processor = ingestion.processor.DocumentProcessor(
-        faiss_store=object(),
-        embedding_provider=object(),
+        faiss_store=vectorstore.faiss.FAISSStore(dimension=2, embedding_model="unused"),
+        embedding_provider=UnusedEmbeddingProvider(),
         loader=FailingLoader(),
     )
 

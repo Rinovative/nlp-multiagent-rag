@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from src import embeddings, vectorstore
 
@@ -41,6 +41,22 @@ __all__ = [
 
 class DocumentProcessingError(RuntimeError):
     """Represent a document-processing failure safe for the UI boundary."""
+
+
+class _PDFLoader(Protocol):
+    """Describe the in-memory PDF loading capability used by the processor."""
+
+    def load_pdf(
+        self,
+        content: bytes,
+        /,
+        *,
+        file_name: str,
+        extract_tables: bool = True,
+    ) -> dict[str, Any]:
+        """Load PDF bytes into the canonical document mapping."""
+
+        ...
 
 
 @dataclass(frozen=True)
@@ -100,7 +116,7 @@ class DocumentProcessor:
         *,
         faiss_store: vectorstore.faiss.FAISSStore,
         embedding_provider: embeddings.contracts.EmbeddingProvider,
-        loader: loader_module.UniversalPDFLoader | None = None,
+        loader: _PDFLoader | None = None,
         chunker_instance: chunker.PDFChunker | None = None,
         preprocessor_factory: Callable[[dict], Any] = preprocessing.PdfPreprocessor,
     ) -> None:

@@ -49,7 +49,7 @@ class EmbeddingProvider(Protocol):
 
         ...
 
-    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+    def embed_documents(self, texts: Sequence[str], /) -> list[list[float]]:
         """Embed document passages while preserving input order.
 
         Parameters
@@ -65,7 +65,7 @@ class EmbeddingProvider(Protocol):
 
         ...
 
-    def embed_query(self, text: str) -> list[float]:
+    def embed_query(self, text: str, /) -> list[float]:
         """Embed one retrieval query with provider-specific query semantics.
 
         Parameters

@@ -1,7 +1,7 @@
-[Interaktive Streamlit-Demo öffnen](https://nlp-multiagent-rag.streamlit.app/)\
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://nlp-multiagent-rag.streamlit.app/)
 _Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
-# NLP Multi-Agent RAG (Wahlfachprojekt)
+# NLP Multi-Agent RAG
 
 **Wahlfachprojekt** im Rahmen des Studiengangs  
 **BSc Systemtechnik – Vertiefung Computational Engineering**  
@@ -12,69 +12,36 @@ _Interaktive Web-App direkt im Browser öffnen (via Streamlit Community Cloud)_
 
 ## 📌 Projektbeschreibung
 
-Dieses Wahlfachprojekt beantwortet Fragen zu hochgeladenen PDF-Dokumenten mit einer mehrsprachigen Retrieval-Augmented-Generation-Pipeline (RAG). Die Dokumente werden strukturbewusst verarbeitet und in überlappende Chunks zerlegt. Lokale Embeddings mit `intfloat/multilingual-e5-small` erschliessen den Inhalt für die semantische Suche in einem sitzungseigenen FAISS-Index.
-
-LangGraph orchestriert drei klar getrennte Rollen: Der Retriever Agent sucht relevante Textstellen, der Memory Agent stellt den Gesprächskontext bereit und der Generator Agent formuliert die Antwort. Die Chat-Oberfläche zeigt zu jeder erfolgreichen Antwort den tatsächlich verwendeten Provider sowie deduplizierte Dokument- und Seitenhinweise. Die Generierung erfolgt über den kontingentgeschützten OpenAI-Pfad oder kontrolliert über Hugging Face Inference Providers. Browser-Sitzungen halten Uploads, Vektoren und Gesprächsverlauf voneinander getrennt.
+Die Web-App ermöglicht Besucherinnen und Besuchern, eigene PDFs hochzuladen und dazu Fragen auf Deutsch oder Englisch zu stellen. Dokumente werden lokal verarbeitet, mit `intfloat/multilingual-e5-small` eingebettet und über einen sitzungsspezifischen FAISS-Index durchsucht. LangGraph koordiniert Retrieval, Gesprächskontext und Antwortgenerierung. Die Generierung läuft über kontingentgeschütztes OpenAI oder Hugging Face Inference Providers. Uploads, Vektorspeicher und Gesprächsverläufe bleiben zwischen Browser-Sitzungen isoliert. Antworten nennen den verwendeten Provider und das Modell sowie Dokument- und Seitenquellen.
 
 <details>
-<summary><strong>Dokumentverarbeitung und Chunking</strong></summary>
+<summary><strong>Dokumentverarbeitung und Retrieval</strong></summary>
 
 - `pdfplumber` extrahiert Text, Seiten- und Layoutinformationen direkt aus PDF-Dateien.
 - Die Vorverarbeitung normalisiert Text, erkennt wiederkehrende Kopf- und Fusszeilen und leitet typografische Strukturmerkmale ab.
-- Der eigene Chunker erhält Dokument-, Seiten-, Abschnitts- und Positionsmetadaten und bildet reproduzierbare Chunk-IDs.
-- Vor der Verarbeitung gelten höchstens zehn PDFs, 64 MB pro Datei und 128 MB für die gesamte Auswahl. Dabei entspricht 1 MB genau 1 048 576 Byte.
-
-Die strukturbezogene Segmentierung ist eine Implementierungseigenschaft; eine höhere Retrieval-Qualität gegenüber anderen Chunking-Verfahren wurde im Projekt nicht experimentell nachgewiesen.
-
+- Der Chunker erzeugt deterministische, überlappende Textabschnitte mit Dokument-, Seiten-, Struktur- und Positionsmetadaten.
+- `SentenceTransformers` lädt `intfloat/multilingual-e5-small` lokal; E5-konforme Präfixe unterscheiden Passage- und Anfrage-Embeddings.
+- Ein sitzungsspezifischer FAISS-Index sucht per L2-Distanz. Explizit gespeicherte Snapshots werden samt Schema, Embedding-Modell, Dimension, Index und Datensätzen validiert und atomar aktiviert.
 </details>
 
 <details>
-<summary><strong>Embeddings und semantische Suche</strong></summary>
+<summary><strong>Multi-Agent-Orchestrierung und Sitzungen</strong></summary>
 
-- `SentenceTransformers` lädt das mehrsprachige Modell `intfloat/multilingual-e5-small` lokal und unabhängig vom gewählten Generierungsanbieter.
-- E5-konforme Präfixe unterscheiden Dokument- und Anfrage-Embeddings.
-- FAISS speichert Vektoren und zugehörige Metadaten in eindeutiger Positionsreihenfolge und liefert die nächsten Treffer per L2-Distanz.
-- Persistierte FAISS-Snapshots werden vollständig versioniert; beim Laden werden Schema, Embedding-Modell, Dimension, Index und Datensätze validiert.
+Der LangGraph-Ablauf orchestriert spezialisierte Rollen in fester Reihenfolge: Der Memory Agent lädt den Verlauf, der Retriever Agent sucht relevante Textstellen, der Generator Agent erzeugt eine Antwort und danach wird der erfolgreiche Dialogzug gespeichert. Das Ergebnis weist den tatsächlich verwendeten Provider und das Modell aus. Dokument- und Seitenquellen erscheinen geordnet nach Retrieval-Relevanz und ohne Duplikate.
 
+Jede Browser-Sitzung besitzt ein isoliertes Upload-Set, einen eigenen FAISS-Speicher und einen eigenen Gesprächsverlauf. Eine geänderte Dokumentauswahl wird erst nach vollständig erfolgreicher Verarbeitung atomar aktiviert. Diese Sitzungsdaten bleiben im Arbeitsspeicher der laufenden Anwendung und sind keine dauerhafte serverseitige Dokumentablage.
 </details>
 
 <details>
-<summary><strong>Multi-Agent-Orchestrierung</strong></summary>
+<summary><strong>Provider-Routing und Kontingentschutz</strong></summary>
 
-Der feste LangGraph-Ablauf lädt zuerst den sitzungsspezifischen Verlauf, führt danach das Retrieval aus, generiert genau eine Antwort und speichert abschliessend den neuen Dialogzug. Das typisierte Ergebnis enthält zusätzlich deduplizierte Quellenhinweise in Retrieval-Reihenfolge, ohne die gefundenen Chunks ein zweites Mal abzurufen. Die Streamlit-Oberfläche bleibt eine dünne Grenze; Verarbeitung, Retrieval, Speicher und Provider-Routing liegen in typisierten Anwendungskomponenten.
+`GENERATION_PROVIDER` steuert die Antwortgenerierung. Im Modus `huggingface` wird ausschliesslich Hugging Face verwendet. `auto` bevorzugt OpenAI, sofern Schlüssel und Redis-Kontingent verfügbar sind, und versucht andernfalls oder bei definierten temporären Fehlern einmalig Hugging Face. Im Modus `openai` ist dieser Fallback nur mit `OPENAI_FALLBACK_ENABLED=true` aktiv.
 
+Standardmässig kommen `Qwen/Qwen2.5-7B-Instruct` über Hugging Face und `gpt-5.4-mini` über OpenAI zum Einsatz. Redis autorisiert und begrenzt die OpenAI-Nutzung atomar nach Sitzung, Tag und Monat. Ohne erfolgreiche Autorisierung bleibt OpenAI gesperrt. Öffentliche Besucher benötigen keine eigenen API-Schlüssel.
+
+Die Hugging-Face-Route hängt von gültiger Authentifizierung, verfügbaren Credits, Modellverfügbarkeit und externer Provider-Kapazität ab. Ein Fallback kann daher nicht in jedem Fall eine Antwort garantieren.
 </details>
 
-<details>
-<summary><strong>Modellwahl und OpenAI-Kontingentschutz</strong></summary>
-
-`GENERATION_PROVIDER` unterstützt drei Modi:
-
-| Modus | Verhalten |
-| --- | --- |
-| `huggingface` | Verwendet ausschliesslich die konfigurierte Hugging-Face-Generierung. |
-| `auto` | Verwendet OpenAI, wenn Schlüssel und Redis-Kontingent verfügbar sind; andernfalls oder bei begrenzten temporären Fehlern wird Hugging Face genau einmal versucht. Ohne OpenAI-Konfiguration wird direkt Hugging Face verwendet. |
-| `openai` | Verwendet den kontingentgeschützten OpenAI-Pfad. Ein Hugging-Face-Fallback ist nur mit `OPENAI_FALLBACK_ENABLED=true` aktiv. |
-
-Das Redis-Backend reserviert Anfragen und Token atomar per Lua-Skript. Es begrenzt Tages-, Monats- und Sitzungsnutzung und kann vom Betreiber sofort deaktiviert werden. OpenAI verwendet `gpt-5.4-mini` über `/v1/chat/completions` mit höchstens 384 Ausgabetokens; zusätzlicher Reasoning-Aufwand wird nicht aktiviert. Ist Redis nicht erreichbar, wird keine neue OpenAI-Nutzung unkontrolliert freigegeben; je nach Modus wird sicher abgebrochen oder auf Hugging Face zurückgefallen. Öffentliche Besucher geben niemals API-Schlüssel ein.
-
-Der Hugging-Face-Pfad bleibt von gültiger Authentifizierung, verfügbaren Inference-Providers-Credits, Modellverfügbarkeit, Provider-Kapazität und externen Störungen abhängig. Ein ausgewählter Fallback garantiert deshalb keine erfolgreiche Antwort.
-
-</details>
-
-<details>
-<summary><strong>Session-Isolation und Persistenz</strong></summary>
-
-Jede Streamlit-Browser-Sitzung besitzt eine eigene Sitzungs-ID, ein eigenes Upload-Set, einen eigenen FAISS-Speicher und einen eigenen Gesprächsverlauf. Ein neues Upload-Set wird erst nach vollständig erfolgreicher Verarbeitung atomar aktiviert. Die Web-App arbeitet sitzungsbezogen im Arbeitsspeicher; die FAISS-Komponente unterstützt zusätzlich validierte, atomar umgeschaltete Snapshot-Generationen für explizit konfigurierte Speicherpfade.
-
-</details>
-
-<details>
-<summary><strong>Qualitätssicherung</strong></summary>
-
-Die deterministische Testsuite deckt unter anderem Importgrenzen, Konfiguration, PDF-Verarbeitung, Upload-Limits, Chunking, Embeddings, FAISS, Chat-Verhalten, Quellenhinweise, Provider-Routing, Kontingente, CLI, Sitzungsisolation und die Streamlit-Grenze ab. Black, Ruff und Mypy sind als Entwicklungsprüfungen konfiguriert; die CI führt dieselben Kernprüfungen unter Python 3.12 aus.
-
-</details>
 
 ---
 
@@ -86,53 +53,55 @@ Der [ursprüngliche akademische Projektbericht](docs/Albertin_Rino_NLP_Projekt.p
 
 ## 🧭 Architektur und Datenfluss
 
-Die Anwendung trennt Dokumentaufnahme und Fragebeantwortung. Beide Abläufe teilen sich den sitzungseigenen FAISS-Speicher und das lokale Embedding-Modell.
+Dokumentaufnahme und Fragebeantwortung laufen innerhalb einer isolierten Browser-Sitzung zusammen und nutzen denselben sitzungsspezifischen FAISS-Index.
 
 <details>
-<summary><strong>Vertikale Architekturdiagramme anzeigen</strong></summary>
-
-### Dokumentaufnahme
+<summary><strong>Architekturdiagramm anzeigen</strong></summary>
 
 ```mermaid
 flowchart TD
-    A[PDF-Upload] --> B[Loader]
-    B --> C[Vorverarbeitung]
-    C --> D[Strukturbewusstes Chunking]
-    D --> E[Lokale E5-Embeddings]
-    E --> F[Sitzungseigener FAISS-Index]
-```
+    S[Streamlit-Browser-Sitzung]
 
-### Fragebeantwortung
+    S --> U[PDF-Upload]
+    U --> L[Loader]
+    L --> P[Vorverarbeitung]
+    P --> C[Strukturbewusstes Chunking]
+    C --> ED[Lokale E5-Passage-Embeddings]
+    ED --> F[(Sitzungsspezifischer FAISS-Index)]
 
-```mermaid
-flowchart TD
-    Q[Benutzerfrage] --> O[LangGraph-Orchestrierung]
+    S --> Q[Benutzerfrage]
+    Q --> O[LangGraph-Orchestrierung]
     O --> M[Memory Agent]
     M --> R[Retriever Agent]
-    R --> E[Query-Embedding]
-    E --> F[Sitzungseigener FAISS-Index]
+    R --> EQ[Lokales E5-Query-Embedding]
+    EQ --> F
     F --> G[Generator Agent]
-    G --> P[Provider Router]
-    P --> H[Hugging Face]
-    P --> K[Redis-Kontingent-Autorisierung]
-    K --> A[OpenAI]
-    A -. begrenzter Fallback .-> H
-    H --> Z[Generierte Antwort]
-    A --> Z
-    Z --> V[Quellenhinweise]
-    V --> S[Gespräch speichern]
+    G --> PR[Provider Router]
+
+    PR --> HF[Hugging Face]
+    PR --> K[Redis-Kontingent-Autorisierung]
+    K --> OA[OpenAI]
+    OA -. kontrollierter Fallback .-> HF
+
+    HF --> A[Generierte Antwort]
+    OA --> A
+    A --> V[Provider-, Modell- und Quellenhinweise]
+    V --> H[Gespräch speichern]
 ```
 
 </details>
 
+
 ---
 
-## ⚙️ Lokale Ausführung
+## ⚙️ Ausführung und Deployment
 
 <details>
-<summary><strong>Empfohlen: Poetry und Hugging Face</strong></summary>
+<summary><strong>Lokale Ausführung und Deployment anzeigen</strong></summary>
 
-Voraussetzungen sind Git, Python 3.12 und Poetry 2.x. Die Hugging-Face-Generierungsroute benötigt ein persönliches, fein abgestimmtes Token mit der minimalen Berechtigung **Make calls to Inference Providers**; die lokalen Embeddings benötigen keinen API-Schlüssel.
+### Lokaler Start
+
+Vorausgesetzt werden Git, Python 3.12 und Poetry 2.x.
 
 ```bash
 git clone https://github.com/Rinovative/nlp-multiagent-rag.git
@@ -141,85 +110,53 @@ poetry install --with dev
 cp .env.template .env
 ```
 
-Unter PowerShell lautet der Kopierbefehl:
+Unter PowerShell wird die Vorlage mit `Copy-Item .env.template .env` kopiert.
 
-```powershell
-Copy-Item .env.template .env
-```
-
-Mindestens diese Werte in `.env` setzen:
+Für die Hugging-Face-Route mindestens folgende Werte in `.env` setzen:
 
 ```dotenv
 GENERATION_PROVIDER=huggingface
 HUGGINGFACE_API_TOKEN=eigenes_huggingface_token
 ```
 
-Den Token-Platzhalter durch das eigene Hugging-Face-Token mit der Berechtigung **Make calls to Inference Providers** ersetzen.
-
-Anwendung aus dem Repository-Stamm starten:
+Das Token benötigt die Berechtigung **Make calls to Inference Providers**. Die lokalen Embeddings benötigen keinen API-Schlüssel.
 
 ```bash
 poetry run streamlit run app.py
 ```
 
-</details>
+### Streamlit Community Cloud
 
-<details>
-<summary><strong>Streamlit Community Cloud bereitstellen</strong></summary>
+Für die Bereitstellung das Repository `Rinovative/nlp-multiagent-rag`, den Branch `main`, den Einstiegspunkt `app.py` und Python 3.12 auswählen. Die benötigten Umgebungsvariablen werden als Streamlit Secrets hinterlegt.
 
-1. In Streamlit Community Cloud das Repository `Rinovative/nlp-multiagent-rag`, den Branch `main` und den Einstiegspunkt `app.py` wählen.
-2. In den erweiterten Einstellungen Python 3.12 wählen. Community Cloud erkennt das `pyproject.toml` als Poetry-Abhängigkeitsdatei; die synchronisierte `poetry.lock` liegt daneben im Repository-Stamm.
-3. Im Bereich **Secrets** mindestens `GENERATION_PROVIDER` und `HUGGINGFACE_API_TOKEN` hinterlegen. Das Hugging-Face-Token benötigt die Berechtigung **Make calls to Inference Providers**. Das Modell kann optional mit `HUGGINGFACE_GENERATION_MODEL` angepasst werden.
-4. Für den optionalen OpenAI-Pfad zusätzlich `OPENAI_API_KEY`, `REDIS_URL` und die gewünschte Routing-Konfiguration setzen.
-5. Deployment-Logs prüfen und danach Upload, Retrieval und eine vollständige Antwort in einer Test-Sitzung validieren.
+Für Hugging Face werden `GENERATION_PROVIDER` und `HUGGINGFACE_API_TOKEN` benötigt. Der optionale OpenAI-Pfad erfordert zusätzlich `OPENAI_API_KEY` und `REDIS_URL`. Secrets dürfen niemals in Git gespeichert werden.
 
-Geheimnisse gehören ausschliesslich in die Streamlit-Secrets und dürfen weder in Git noch in die README oder in Logausgaben übernommen werden. Der oben verlinkte Endpunkt ist die vorgesehene öffentliche Adresse; die Bereitstellung dieses Quellstands und der anonyme Zugriff werden separat in Streamlit Community Cloud validiert.
+### Konfiguration
 
-</details>
+Alle unterstützten Einstellungen und Standardwerte sind in [`.env.template`](.env.template) dokumentiert. Dazu gehören Provider und Modelle, Embeddings, Upload-Limits, Retrieval, Gesprächsverlauf und Zeitlimits.
 
-<details>
-<summary><strong>Optionale OpenAI-, Redis- und Laufzeitkonfiguration</strong></summary>
+Im Modus `auto` wird OpenAI nur nach erfolgreicher Redis-Autorisierung verwendet, andernfalls wird kontrolliert auf Hugging Face ausgewichen. Betreiber-Schlüssel bleiben für Besucher unsichtbar.
 
-Die Vorlage [`.env.template`](.env.template) enthält sämtliche unterstützten Werte:
+### OpenAI-Kontingent administrieren
 
-| Variable | Zweck | Standard oder Pflicht |
-| --- | --- | --- |
-| `GENERATION_PROVIDER` | Route `auto`, `huggingface` oder `openai` | `auto` |
-| `HUGGINGFACE_API_TOKEN` | Fein abgestimmtes Token mit **Make calls to Inference Providers** | Für jede verwendete Hugging-Face-Route erforderlich |
-| `HUGGINGFACE_GENERATION_MODEL` | Hosted-Generation-Modell | `Qwen/Qwen2.5-7B-Instruct` |
-| `OPENAI_API_KEY` | Betreiber-Schlüssel für OpenAI | Nur für OpenAI erforderlich |
-| `OPENAI_GENERATION_MODEL` | OpenAI-Modell für Chat Completions | `gpt-5.4-mini` |
-| `OPENAI_FALLBACK_ENABLED` | Erlaubt im Modus `openai` einen begrenzten Hugging-Face-Fallback | `false` |
-| `REDIS_URL` | Redis-Verbindung für atomare OpenAI-Kontingente | Für OpenAI erforderlich |
-| `OPENAI_QUOTA_KEY_PREFIX` | Namensraum der Kontingentschlüssel | `nlp-rag:{openai-quota}` |
-| `EMBEDDING_MODEL` | Lokales SentenceTransformers-Modell | `intfloat/multilingual-e5-small` |
-| `EMBEDDING_DIMENSION` | Erwartete Vektordimension | `384` |
-| `EMBEDDING_BATCH_SIZE` | Batch-Grösse der Embeddings | `32` |
-| `MAX_UPLOAD_FILE_MB` | Maximale Grösse pro PDF; 1 MB = 1 048 576 Byte | `64` |
-| `MAX_UPLOAD_TOTAL_MB` | Maximale Gesamtgrösse der aktiven Auswahl | `128` |
-| `MAX_UPLOAD_FILES` | Maximale Anzahl gleichzeitig ausgewählter PDFs | `10` |
-| `MAX_INPUT_CHARACTERS` | Maximale Zeichenanzahl für Systemtext, Verlauf, Kontext und Frage | `24000` |
-| `MAX_OUTPUT_TOKENS` | Maximale Generierungslänge | `384` |
-| `MAX_HISTORY_MESSAGES` | Anzahl berücksichtigter Verlaufsnachrichten | `10` |
-| `RETRIEVAL_TOP_K` | Anzahl abgerufener Chunks | `5` |
-| `PROVIDER_TIMEOUT_SECONDS` | Zeitlimit pro Provider-Aufruf | `45` |
-
-`auto` ist für eine öffentliche Installation mit optionalem OpenAI-Zugang vorgesehen: Ohne konfigurierten OpenAI-Schlüssel wird Hugging Face verwendet. Sobald OpenAI konfiguriert ist, muss Redis dessen Verwendung autorisieren. Besucher sehen oder erfassen die Betreiber-Schlüssel nicht.
-
-</details>
-
-<details>
-<summary><strong>OpenAI-Kontingent administrieren</strong></summary>
-
-Die Betreiber-CLI liest `REDIS_URL` aus `.env` oder akzeptiert `--redis-url`. Sie gibt keine Redis-Zugangsdaten aus.
+Für den OpenAI-Pfad werden die Produktionslimits einmalig gespeichert und anschliessend aktiviert. `set-limits` aktiviert das Kontingent bewusst noch nicht.
 
 ```bash
-poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' inspect
-poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' set-limits --daily-requests 30 --monthly-requests 300 --daily-tokens 100000 --monthly-tokens 1000000 --session-requests 5 --session-window-seconds 3600
-poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' enable
-poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' inspect
-poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod' disable
+poetry run python -m src.cli.cli_quota \
+  --key-prefix 'nlp-rag:{openai-quota}:prod' \
+  set-limits \
+  --daily-requests 30 \
+  --monthly-requests 300 \
+  --daily-tokens 100000 \
+  --monthly-tokens 1000000 \
+  --session-requests 5 \
+  --session-window-seconds 3600
+
+poetry run python -m src.cli.cli_quota \
+  --key-prefix 'nlp-rag:{openai-quota}:prod' enable
 ```
+
+Der aktuelle Zustand lässt sich mit `inspect` prüfen. Mit `disable` kann der OpenAI-Zugang jederzeit sofort deaktiviert werden. Die CLI liest `REDIS_URL` aus `.env` oder über `--redis-url` und gibt keine Zugangsdaten aus.
 
 </details>
 
@@ -234,9 +171,10 @@ poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod
 .
 ├── .github/
 │   └── workflows/
-│       └── ci.yml                                  # CI für Formatierung, Linting, Typen und Tests
+│       └── ci.yml                                 # CI für Formatierung, Linting, Typen und Tests
 ├── docs/
 │   └── Albertin_Rino_NLP_Projekt.pdf              # Ursprünglicher akademischer Projektbericht
+│
 ├── src/
 │   ├── agents/
 │   │   ├── __init__.py                            # Öffentliche Agent-Schnittstellen
@@ -276,7 +214,7 @@ poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod
 │   │   ├── providers_contracts.py                 # Ergebnisse, Fehler und Provider-Verträge
 │   │   ├── providers_generation_huggingface.py    # Hugging-Face-Generierungsprovider
 │   │   ├── providers_generation_openai.py         # OpenAI-Generierungsprovider
-│   │   └── providers_router.py                     # Routing, Kontingente und begrenzter Fallback
+│   │   └── providers_router.py                    # Routing, Kontingente und begrenzter Fallback
 │   ├── quota/
 │   │   ├── __init__.py                            # Öffentliche Kontingent-Schnittstellen
 │   │   ├── quota_contracts.py                     # Limits, Reservierungen und Fehler
@@ -286,33 +224,8 @@ poetry run python -m src.cli.cli_quota --key-prefix 'nlp-rag:{openai-quota}:prod
 │   │   ├── __init__.py                            # Öffentliche Vektorspeicher-Schnittstellen
 │   │   └── vectorstore_faiss.py                   # FAISS-Suche und validierte Snapshots
 │   └── __init__.py                                # Importierbares Top-Level-Paket
-├── tests/
-│   ├── ingestion/
-│   │   ├── __init__.py                            # Ingestion-Testpaket
-│   │   ├── test_chunker.py                        # Chunk-Schema und Strukturtests
-│   │   ├── test_embedder.py                       # Embedding-Verträge und Batch-Verhalten
-│   │   ├── test_loader.py                         # PDF-Ladetests
-│   │   └── test_preprocessing.py                  # Text- und Layoutbereinigung
-│   ├── providers/
-│   │   ├── __init__.py                            # Provider-Testpaket
-│   │   ├── test_generation_providers.py           # OpenAI- und Hugging-Face-Adapter
-│   │   ├── test_generator.py                      # Generator Agent
-│   │   ├── test_retriever.py                      # Retriever Agent
-│   │   └── test_router.py                         # Routing- und Fallback-Regeln
-│   ├── quota/
-│   │   ├── __init__.py                            # Kontingent-Testpaket
-│   │   ├── test_cli.py                            # Betreiber-CLI
-│   │   └── test_quota.py                          # Limits, Atomizität und Fehlerfälle
-│   ├── vectorstore/
-│   │   ├── __init__.py                            # Vektorspeicher-Testpaket
-│   │   └── test_faiss_store.py                    # Suche, Validierung und Snapshots
-│   ├── __init__.py                                # Testpaket
-│   ├── conftest.py                                # Gemeinsame deterministische Fixtures
-│   ├── test_app.py                                # Streamlit-Grenze ohne Zugangsdaten
-│   ├── test_architecture.py                       # Import- und Architekturverträge
-│   ├── test_config.py                             # Konfigurationsvalidierung
-│   ├── test_pipeline.py                           # Ingestion- und RAG-Integration
-│   └── test_session.py                            # Isolation und Upload-Lebenszyklus
+│
+├── tests/                                         # Deterministische Tests für Anwendung, Ingestion, Provider, Kontingente, Sessions und Vektorspeicher
 ├── .env.template                                  # Dokumentierte Konfigurationsvorlage
 ├── .gitignore                                     # Ausgeschlossene lokale Artefakte
 ├── .pre-commit-config.yaml                        # Lokale Qualitätsprüfungen
@@ -343,5 +256,5 @@ Dieses Projekt steht unter der [MIT-Lizenz](LICENSE).
 - [Modellkarte `intfloat/multilingual-e5-small`](https://huggingface.co/intfloat/multilingual-e5-small).
 - [Hugging Face Inference Providers – Dokumentation](https://huggingface.co/docs/inference-providers/index) und [Modellkarte `Qwen/Qwen2.5-7B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct).
 - [OpenAI Chat Completions – API-Referenz](https://developers.openai.com/api/reference/chat-completions/overview/) und [Modellkarte `gpt-5.4-mini`](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
-- [Redis Lua Scripting – Dokumentation](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/).
+- [Redis Lua Scripting – Dokumentation](https://redis.io/docs/latest/develop/programmability/eval-intro/).
 - [Streamlit Community Cloud – Dokumentation](https://docs.streamlit.io/deploy/streamlit-community-cloud).

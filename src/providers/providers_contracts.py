@@ -134,10 +134,11 @@ class GenerationFallbackError(GenerationError):
         if not isinstance(provider_error, GenerationError):
             raise TypeError("provider_error must be a project-owned GenerationError")
         super().__init__("The configured fallback generation route failed.")
-        self.provider_id = provider_id
-        self.model_id = model_id
-        self.fallback_reason = fallback_reason
-        self.provider_error_category = provider_error.error_category
+        self.provider_id: str = provider_id
+        self.model_id: str = model_id
+        self.fallback_reason: str = fallback_reason
+        self.provider_error_category: str = provider_error.error_category
+        self.provider_error_type: type[GenerationError] = type(provider_error)
 
 
 @dataclass(frozen=True)
@@ -309,7 +310,7 @@ class GenerationProvider(Protocol):
 
         ...
 
-    def generate(self, request: GenerationRequest) -> GenerationResult:
+    def generate(self, request: GenerationRequest, /) -> GenerationResult:
         """Generate one normalized provider-attributed answer.
 
         Parameters

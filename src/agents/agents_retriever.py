@@ -21,9 +21,7 @@ Boundaries:
 
 from __future__ import annotations
 
-from typing import Any, Sequence
-
-from src import embeddings, vectorstore
+from typing import Any, Protocol, Sequence
 
 __all__ = [
     "RetrievalConfigurationError",
@@ -43,6 +41,47 @@ class RetrievalConfigurationError(RetrievalError):
 
 class RetrievalValidationError(RetrievalError):
     """Indicate that an invalid question was rejected before embedding."""
+
+
+class _QueryEmbeddingProvider(Protocol):
+    """Describe the query-only embedding capability used by retrieval."""
+
+    @property
+    def model_id(self) -> str:
+        """Return the embedding model identifier."""
+
+        ...
+
+    @property
+    def dimension(self) -> int:
+        """Return the embedding vector dimension."""
+
+        ...
+
+    def embed_query(self, text: str, /) -> list[float]:
+        """Embed one query string."""
+
+        ...
+
+
+class _VectorSearchStore(Protocol):
+    """Describe the read-only vector-store capability used by retrieval."""
+
+    embedding_model: str
+    dimension: int
+
+    @property
+    def record_count(self) -> int:
+        """Return the number of indexed records."""
+
+        ...
+
+    def search(
+        self, query_embedding: Sequence[float], /, *, k: int
+    ) -> list[dict[str, Any]]:
+        """Return the nearest indexed records."""
+
+        ...
 
 
 class RetrieverAgent:
@@ -69,8 +108,8 @@ class RetrieverAgent:
 
     def __init__(
         self,
-        faiss_store: vectorstore.faiss.FAISSStore,
-        embedder: embeddings.contracts.EmbeddingProvider,
+        faiss_store: _VectorSearchStore,
+        embedder: _QueryEmbeddingProvider,
         *,
         top_k: int = 5,
         max_query_characters: int = 4_000,

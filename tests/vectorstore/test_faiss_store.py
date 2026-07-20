@@ -77,7 +77,9 @@ def test_snapshot_reloads_records_and_metadata(workspace_tmp_path):
     assert results[0]["text"] == "text for chunk-a"
     assert results[0]["metadata"]["labels"] == ["one", "two"]
     assert results[0]["metadata"]["nested"] == {"active": True, "score": 1.5}
-    assert reloaded.get_record("chunk-b")["metadata"]["page_number"] == 2
+    reloaded_record = reloaded.get_record("chunk-b")
+    assert reloaded_record is not None
+    assert reloaded_record["metadata"]["page_number"] == 2
 
     _, saved_manifest = manifest(snapshot_directory)
     assert saved_manifest["schema_version"] == 1

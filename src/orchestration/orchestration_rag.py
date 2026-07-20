@@ -23,7 +23,8 @@ Boundaries:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, TypedDict, cast
+from collections.abc import Sequence
+from typing import Any, NotRequired, Protocol, TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -135,7 +136,7 @@ def _source_references(records: list[dict[str, Any]]) -> tuple[SourceReference, 
     return tuple(references)
 
 
-class RAGState(TypedDict, total=False):
+class RAGState(TypedDict):
     """Describe the public typed state exchanged by fixed LangGraph nodes.
 
     Attributes
@@ -154,9 +155,45 @@ class RAGState(TypedDict, total=False):
 
     chat_id: str
     user_input: str
+    history: NotRequired[list[dict[str, str]]]
+    retrieved_records: NotRequired[list[dict[str, Any]]]
+    generation_result: NotRequired[providers.contracts.GenerationResult]
+
+
+class _RAGStateUpdate(TypedDict, total=False):
+    """Describe a partial state update returned by one graph node."""
+
     history: list[dict[str, str]]
     retrieved_records: list[dict[str, Any]]
     generation_result: providers.contracts.GenerationResult
+
+
+class _RetrieverAgent(Protocol):
+    """Describe the retrieval capability required by orchestration."""
+
+    def retrieve_documents(
+        self, query: str, history: Sequence[dict[str, str]], /
+    ) -> list[dict[str, Any]]:
+        """Return ranked records for one question and its history."""
+
+        ...
+
+
+class _GeneratorAgent(Protocol):
+    """Describe the generation capability required by orchestration."""
+
+    def generate_answer(
+        self,
+        user_query: str,
+        retrieved_records: Sequence[dict],
+        history: Sequence[dict[str, str]],
+        /,
+        *,
+        session_id: str,
+    ) -> providers.contracts.GenerationResult:
+        """Generate one attributed answer for an explicit session."""
+
+        ...
 
 
 class _CompiledRAGGraph(Protocol):
@@ -189,8 +226,8 @@ class RAGChatbot:
     def __init__(
         self,
         *,
-        retriever_agent: agents.retriever.RetrieverAgent,
-        generator_agent: agents.generator.GeneratorAgent,
+        retriever_agent: _RetrieverAgent,
+        generator_agent: _GeneratorAgent,
         memory_agent: agents.memory.MemoryAgent,
     ) -> None:
         """Compile the fixed memory, retrieval, generation, and storage graph."""
@@ -211,17 +248,17 @@ class RAGChatbot:
         graph_builder.add_edge("store_memory", END)
         self.graph = cast(_CompiledRAGGraph, graph_builder.compile())
 
-    def _get_memory(self, state: RAGState) -> RAGState:
+    def _get_memory(self, state: RAGState) -> _RAGStateUpdate:
         return {"history": self.memory_agent.get_history(state["chat_id"])}
 
-    def _retrieve(self, state: RAGState) -> RAGState:
+    def _retrieve(self, state: RAGState) -> _RAGStateUpdate:
         return {
             "retrieved_records": self.retriever_agent.retrieve_documents(
                 state["user_input"], state.get("history", [])
             )
         }
 
-    def _generate(self, state: RAGState) -> RAGState:
+    def _generate(self, state: RAGState) -> _RAGStateUpdate:
         return {
             "generation_result": self.generator_agent.generate_answer(
                 state["user_input"],
@@ -231,9 +268,11 @@ class RAGChatbot:
             )
         }
 
-    def _store_memory(self, state: RAGState) -> RAGState:
+    def _store_memory(self, state: RAGState) -> _RAGStateUpdate:
         chat_id = state["chat_id"]
-        result = state["generation_result"]
+        result = state.get("generation_result")
+        if result is None:
+            raise RuntimeError("RAG graph did not produce a generation result.")
         self.memory_agent.add_message(chat_id, "user", state["user_input"])
         self.memory_agent.add_message(chat_id, "assistant", result.answer)
         return {}
@@ -273,7 +312,10 @@ class RAGChatbot:
             "user_input": user_input.strip(),
         }
         result = self.graph.invoke(initial_state)
+        generation_result = result.get("generation_result")
+        if generation_result is None:
+            raise RuntimeError("RAG graph did not produce a generation result.")
         return RAGResult(
-            generation=result["generation_result"],
+            generation=generation_result,
             sources=_source_references(result.get("retrieved_records", [])),
         )

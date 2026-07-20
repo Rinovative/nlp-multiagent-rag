@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import huggingface_hub
 import httpx
 import pytest
+import requests
 from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
 from openai import (
     APIConnectionError,
@@ -43,9 +44,14 @@ class FakeHuggingFaceClient:
 
 
 def hf_http_error(status_code):
+    response = requests.Response()
+    response.status_code = status_code
+    response.request = requests.Request(
+        "POST", "https://router.huggingface.co/v1/chat/completions"
+    ).prepare()
     return HfHubHTTPError(
         "provider detail with secret-value",
-        response=SimpleNamespace(status_code=status_code, headers={}, request=None),
+        response=response,
     )
 
 

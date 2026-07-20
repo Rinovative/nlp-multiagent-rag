@@ -27,7 +27,7 @@ class FakeProvider:
         self.usage = usage or providers.contracts.GenerationUsage(4, 3)
         self.calls = 0
 
-    def generate(self, generation_request):
+    def generate(self, request):
         self.calls += 1
         if self.error is not None:
             raise self.error
@@ -67,8 +67,23 @@ class FixedClockQuota:
 
 
 class UnavailableQuota:
+    def inspect(self, *, now=None):
+        raise AssertionError("inspect is not used by routing")
+
+    def set_limits(self, limits):
+        raise AssertionError("set_limits is not used by routing")
+
+    def set_enabled(self, enabled):
+        raise AssertionError("set_enabled is not used by routing")
+
     def reserve(self, **_kwargs):
         raise quota.contracts.QuotaUnavailableError("unavailable")
+
+    def reconcile(self, reservation, *, actual_tokens):
+        raise AssertionError("reconcile is unreachable after a denied reservation")
+
+    def release(self, reservation):
+        raise AssertionError("release is unreachable after a denied reservation")
 
 
 class ExhaustedQuota:
@@ -79,6 +94,21 @@ class ExhaustedQuota:
     def reserve(self, **_kwargs):
         self.reserve_calls += 1
         raise quota.contracts.QuotaExhaustedError(self.reason)
+
+    def inspect(self, *, now=None):
+        raise AssertionError("inspect is not used by routing")
+
+    def set_limits(self, limits):
+        raise AssertionError("set_limits is not used by routing")
+
+    def set_enabled(self, enabled):
+        raise AssertionError("set_enabled is not used by routing")
+
+    def reconcile(self, reservation, *, actual_tokens):
+        raise AssertionError("reconcile is unreachable after a denied reservation")
+
+    def release(self, reservation):
+        raise AssertionError("release is unreachable after a denied reservation")
 
 
 def configured_quota(*, daily_tokens=1000):
@@ -246,6 +276,49 @@ def test_auto_uses_openai_five_times_then_huggingface_for_session_limit(caplog):
     ) in caplog.text
 
 
+def test_session_quota_denial_preserves_huggingface_authentication_failure(caplog):
+    free = FakeProvider("huggingface")
+    openai = FakeProvider("openai")
+    hard_quota = configured_quota()
+    router = providers.router.GenerationRouter(
+        mode="auto",
+        free_provider=free,
+        openai_provider=openai,
+        quota_backend=hard_quota,
+    )
+
+    results = [
+        router.generate(request(), session_id="one-browser-session") for _ in range(5)
+    ]
+    free.error = providers.contracts.GenerationAuthenticationError(
+        "private hosted credential detail"
+    )
+
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(providers.contracts.GenerationFallbackError) as captured:
+            router.generate(request(), session_id="one-browser-session")
+
+    assert [result.provider_id for result in results] == ["openai"] * 5
+    assert captured.value.provider_id == "huggingface"
+    assert captured.value.model_id == "huggingface-model"
+    assert captured.value.fallback_reason == "session_requests_exhausted"
+    assert captured.value.provider_error_category == "authentication"
+    assert (
+        captured.value.provider_error_type
+        is providers.contracts.GenerationAuthenticationError
+    )
+    assert isinstance(
+        captured.value.__cause__, providers.contracts.GenerationAuthenticationError
+    )
+    assert openai.calls == 5
+    assert free.calls == 1
+    assert hard_quota.reserve_calls == 6
+    assert "error_category=authentication" in caplog.text
+    assert "fallback_reason=session_requests_exhausted" in caplog.text
+    assert "provider_call_attempted=true" in caplog.text
+    assert "private hosted credential detail" not in caplog.text
+
+
 @pytest.mark.parametrize(
     "reason",
     [
@@ -379,6 +452,10 @@ def test_failed_fallback_is_not_retried_or_routed_recursively():
     assert captured.value.model_id == "huggingface-model"
     assert captured.value.fallback_reason == "openai_temporarily_unavailable"
     assert captured.value.provider_error_category == "temporary"
+    assert (
+        captured.value.provider_error_type
+        is providers.contracts.GenerationTemporaryError
+    )
     assert isinstance(
         captured.value.__cause__, providers.contracts.GenerationTemporaryError
     )

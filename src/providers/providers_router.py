@@ -71,7 +71,7 @@ class GenerationRouter:
 
         if mode not in {"auto", "huggingface", "openai"}:
             raise ValueError("mode must be auto, huggingface, or openai")
-        self._mode = mode
+        self._mode: GenerationMode = mode
         self._free_provider = free_provider
         self._openai_provider = openai_provider
         self._quota_backend = quota_backend
